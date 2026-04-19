@@ -121,6 +121,17 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatEmbedding)
 		})
 
+		httpRouter.POST("/seedance/virtual/asset-groups/create", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/asset-groups/list", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/asset-groups/get", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/asset-groups/update", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/asset-groups/delete", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/assets/create", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/assets/list", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/assets/get", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/assets/update", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/virtual/assets/delete", controller.RelaySeedanceAsset)
+
 		// audio related routes
 		httpRouter.POST("/audio/transcriptions", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)

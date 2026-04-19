@@ -3,6 +3,9 @@ package dto
 type ChannelSettings struct {
 	ForceFormat            bool   `json:"force_format,omitempty"`
 	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
+	ByteplusProjectName    string `json:"byteplus_project_name,omitempty"`
+	ByteplusAssetGroupType string `json:"byteplus_asset_group_type,omitempty"`
+	ByteplusRegion         string `json:"byteplus_region,omitempty"`
 	Proxy                  string `json:"proxy"`
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
@@ -25,6 +28,9 @@ const (
 
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string        `json:"azure_responses_version,omitempty"`
+	ByteplusProjectName                   string        `json:"byteplus_project_name,omitempty"`
+	ByteplusAssetGroupType                string        `json:"byteplus_asset_group_type,omitempty"`
+	ByteplusRegion                        string        `json:"byteplus_region,omitempty"`
 	VertexKeyType                         VertexKeyType `json:"vertex_key_type,omitempty"` // "json" or "api_key"
 	OpenRouterEnterprise                  *bool         `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool          `json:"claude_beta_query,omitempty"`         // Claude 渠道是否强制追加 ?beta=true
