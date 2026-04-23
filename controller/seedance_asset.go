@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	seedanceAssetAdminDefaultGroupType = "AIGC"
-	seedanceAssetAdminVersion          = "2024-01-01"
-	seedanceAssetAdminService          = "ark"
+	seedanceAssetAdminDefaultGroupType   = "AIGC"
+	seedanceAssetAdminRealHumanGroupType = "LivenessFace"
+	seedanceAssetAdminVersion            = "2024-01-01"
+	seedanceAssetAdminService            = "ark"
 )
 
 type seedanceAssetAdminConfig struct {
@@ -44,16 +45,27 @@ type seedanceAssetAction struct {
 var (
 	seedanceAssetChannelLoader = model.CacheGetChannel
 	seedanceAssetActions       = map[string]seedanceAssetAction{
-		"/v1/seedance/virtual/asset-groups/create": {Name: "CreateAssetGroup", Path: "/"},
-		"/v1/seedance/virtual/asset-groups/list":   {Name: "ListAssetGroups", Path: "/"},
-		"/v1/seedance/virtual/asset-groups/get":    {Name: "GetAssetGroup", Path: "/"},
-		"/v1/seedance/virtual/asset-groups/update": {Name: "UpdateAssetGroup", Path: "/"},
-		"/v1/seedance/virtual/asset-groups/delete": {Name: "DeleteAssetGroup", Path: "/"},
-		"/v1/seedance/virtual/assets/create":       {Name: "CreateAsset", Path: "/"},
-		"/v1/seedance/virtual/assets/list":         {Name: "ListAssets", Path: "/"},
-		"/v1/seedance/virtual/assets/get":          {Name: "GetAsset", Path: "/"},
-		"/v1/seedance/virtual/assets/update":       {Name: "UpdateAsset", Path: "/"},
-		"/v1/seedance/virtual/assets/delete":       {Name: "DeleteAsset", Path: "/"},
+		"/v1/seedance/virtual/asset-groups/create":        {Name: "CreateAssetGroup", Path: "/"},
+		"/v1/seedance/virtual/asset-groups/list":          {Name: "ListAssetGroups", Path: "/"},
+		"/v1/seedance/virtual/asset-groups/get":           {Name: "GetAssetGroup", Path: "/"},
+		"/v1/seedance/virtual/asset-groups/update":        {Name: "UpdateAssetGroup", Path: "/"},
+		"/v1/seedance/virtual/asset-groups/delete":        {Name: "DeleteAssetGroup", Path: "/"},
+		"/v1/seedance/virtual/assets/create":              {Name: "CreateAsset", Path: "/"},
+		"/v1/seedance/virtual/assets/list":                {Name: "ListAssets", Path: "/"},
+		"/v1/seedance/virtual/assets/get":                 {Name: "GetAsset", Path: "/"},
+		"/v1/seedance/virtual/assets/update":              {Name: "UpdateAsset", Path: "/"},
+		"/v1/seedance/virtual/assets/delete":              {Name: "DeleteAsset", Path: "/"},
+		"/v1/seedance/real-human/validate-session/create": {Name: "CreateVisualValidateSession", Path: "/"},
+		"/v1/seedance/real-human/validate-result/get":     {Name: "GetVisualValidateResult", Path: "/"},
+		"/v1/seedance/real-human/asset-groups/list":       {Name: "ListAssetGroups", Path: "/"},
+		"/v1/seedance/real-human/asset-groups/get":        {Name: "GetAssetGroup", Path: "/"},
+		"/v1/seedance/real-human/asset-groups/update":     {Name: "UpdateAssetGroup", Path: "/"},
+		"/v1/seedance/real-human/asset-groups/delete":     {Name: "DeleteAssetGroup", Path: "/"},
+		"/v1/seedance/real-human/assets/create":           {Name: "CreateAsset", Path: "/"},
+		"/v1/seedance/real-human/assets/list":             {Name: "ListAssets", Path: "/"},
+		"/v1/seedance/real-human/assets/get":              {Name: "GetAsset", Path: "/"},
+		"/v1/seedance/real-human/assets/update":           {Name: "UpdateAsset", Path: "/"},
+		"/v1/seedance/real-human/assets/delete":           {Name: "DeleteAsset", Path: "/"},
 	}
 )
 
@@ -207,6 +219,10 @@ func hasSeedanceBase64UploadField(payload map[string]any) bool {
 	return false
 }
 
+func isSeedanceRealHumanRoute(path string) bool {
+	return strings.HasPrefix(path, "/v1/seedance/real-human/")
+}
+
 func prepareSeedanceAssetPayload(actionName string, payload map[string]any, config *seedanceAssetAdminConfig) error {
 	delete(payload, "project_name")
 	forceStringField(payload, "ProjectName", config.ProjectName)
@@ -236,6 +252,20 @@ func prepareSeedanceAssetPayload(actionName string, payload map[string]any, conf
 		delete(payload, "GroupType")
 	case "GetAssetGroup", "UpdateAssetGroup", "DeleteAssetGroup", "GetAsset", "UpdateAsset", "DeleteAsset":
 		// ProjectName override is enough for the first backend-only slice.
+	}
+	return nil
+}
+
+func prepareSeedanceAssetPayloadForRoute(path string, actionName string, payload map[string]any, config *seedanceAssetAdminConfig) error {
+	if err := prepareSeedanceAssetPayload(actionName, payload, config); err != nil {
+		return err
+	}
+	if isSeedanceRealHumanRoute(path) {
+		switch path {
+		case "/v1/seedance/real-human/asset-groups/list", "/v1/seedance/real-human/assets/list":
+			filter := seedanceAssetFilter(payload)
+			filter["GroupType"] = seedanceAssetAdminRealHumanGroupType
+		}
 	}
 	return nil
 }
@@ -379,7 +409,7 @@ func RelaySeedanceAsset(c *gin.Context) {
 		seedanceAssetError(c, http.StatusBadRequest, "invalid_request_error", "invalid JSON request body")
 		return
 	}
-	if err = prepareSeedanceAssetPayload(action.Name, payload, config); err != nil {
+	if err = prepareSeedanceAssetPayloadForRoute(c.Request.URL.Path, action.Name, payload, config); err != nil {
 		seedanceAssetError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}

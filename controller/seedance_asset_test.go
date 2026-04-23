@@ -170,3 +170,126 @@ func TestBuildSeedanceAssetTargetURLUsesActionStyle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://ark.ap-southeast-1.byteplusapi.com/?Action=ListAssets&Version=2024-01-01", targetURL)
 }
+
+func TestSeedanceAssetActionForRealHumanValidateRoutes(t *testing.T) {
+	action, ok := seedanceAssetActionForPath("/v1/seedance/real-human/validate-session/create")
+	require.True(t, ok)
+	require.Equal(t, "CreateVisualValidateSession", action.Name)
+
+	action, ok = seedanceAssetActionForPath("/v1/seedance/real-human/validate-result/get")
+	require.True(t, ok)
+	require.Equal(t, "GetVisualValidateResult", action.Name)
+}
+
+func TestPrepareSeedanceAssetPayloadForRealHumanListRoutesForcesLivenessFace(t *testing.T) {
+	payload := map[string]any{
+		"Filter": map[string]any{
+			"GroupType": "client-value",
+		},
+	}
+
+	err := prepareSeedanceAssetPayloadForRoute(
+		"/v1/seedance/real-human/assets/list",
+		"ListAssets",
+		payload,
+		&seedanceAssetAdminConfig{
+			ProjectName:    "server-project",
+			AssetGroupType: "AIGC",
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "server-project", payload["ProjectName"])
+	filter := payload["Filter"].(map[string]any)
+	require.Equal(t, seedanceAssetAdminRealHumanGroupType, filter["GroupType"])
+}
+
+func TestPrepareSeedanceAssetPayloadForRealHumanAssetGroupListForcesLivenessFace(t *testing.T) {
+	payload := map[string]any{
+		"Filter": map[string]any{
+			"GroupType": "client-value",
+		},
+	}
+
+	err := prepareSeedanceAssetPayloadForRoute(
+		"/v1/seedance/real-human/asset-groups/list",
+		"ListAssetGroups",
+		payload,
+		&seedanceAssetAdminConfig{
+			ProjectName: "server-project",
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "server-project", payload["ProjectName"])
+	filter := payload["Filter"].(map[string]any)
+	require.Equal(t, seedanceAssetAdminRealHumanGroupType, filter["GroupType"])
+}
+
+func TestPrepareSeedanceAssetPayloadForRealHumanCreateDoesNotInjectGroupType(t *testing.T) {
+	payload := map[string]any{
+		"GroupId":   "group-id",
+		"URL":       "https://example.com/image.png",
+		"AssetType": "IMAGE",
+	}
+
+	err := prepareSeedanceAssetPayloadForRoute(
+		"/v1/seedance/real-human/assets/create",
+		"CreateAsset",
+		payload,
+		&seedanceAssetAdminConfig{
+			ProjectName: "server-project",
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "server-project", payload["ProjectName"])
+	_, exists := payload["GroupType"]
+	require.False(t, exists)
+}
+
+func TestPrepareSeedanceAssetPayloadForRealHumanValidateSessionDoesNotInjectGroupType(t *testing.T) {
+	payload := map[string]any{
+		"SessionName": "session-1",
+	}
+
+	err := prepareSeedanceAssetPayloadForRoute(
+		"/v1/seedance/real-human/validate-session/create",
+		"CreateVisualValidateSession",
+		payload,
+		&seedanceAssetAdminConfig{
+			ProjectName: "server-project",
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "server-project", payload["ProjectName"])
+	_, exists := payload["GroupType"]
+	require.False(t, exists)
+	filter, hasFilter := payload["Filter"]
+	require.False(t, hasFilter)
+	require.Nil(t, filter)
+}
+
+func TestPrepareSeedanceAssetPayloadForRealHumanValidateResultDoesNotInjectGroupType(t *testing.T) {
+	payload := map[string]any{
+		"TaskId": "task-1",
+	}
+
+	err := prepareSeedanceAssetPayloadForRoute(
+		"/v1/seedance/real-human/validate-result/get",
+		"GetVisualValidateResult",
+		payload,
+		&seedanceAssetAdminConfig{
+			ProjectName: "server-project",
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "server-project", payload["ProjectName"])
+	_, exists := payload["GroupType"]
+	require.False(t, exists)
+	filter, hasFilter := payload["Filter"]
+	require.False(t, hasFilter)
+	require.Nil(t, filter)
+}

@@ -131,6 +131,17 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/seedance/virtual/assets/get", controller.RelaySeedanceAsset)
 		httpRouter.POST("/seedance/virtual/assets/update", controller.RelaySeedanceAsset)
 		httpRouter.POST("/seedance/virtual/assets/delete", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/validate-session/create", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/validate-result/get", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/asset-groups/list", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/asset-groups/get", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/asset-groups/update", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/asset-groups/delete", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/assets/create", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/assets/list", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/assets/get", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/assets/update", controller.RelaySeedanceAsset)
+		httpRouter.POST("/seedance/real-human/assets/delete", controller.RelaySeedanceAsset)
 
 		// audio related routes
 		httpRouter.POST("/audio/transcriptions", func(c *gin.Context) {

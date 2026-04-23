@@ -264,6 +264,8 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		}
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/seedance/virtual/") {
 		modelRequest.Model = "seedance-virtual-asset-admin"
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/seedance/real-human/") {
+		modelRequest.Model = "seedance-real-human-asset-admin"
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1beta/models/") || strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
 		// Gemini API 路径处理: /v1beta/models/gemini-2.0-flash:generateContent
 		relayMode := relayconstant.RelayModeGemini
