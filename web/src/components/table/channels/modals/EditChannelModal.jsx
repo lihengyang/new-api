@@ -128,6 +128,7 @@ const PARAM_OVERRIDE_OPERATIONS_TEMPLATE = {
 };
 
 const DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL = 'doubao-coding-plan';
+const DEFAULT_BYTEPLUS_REGION = 'ap-southeast-1';
 
 // 支持并且已适配通过接口获取模型列表的渠道类型
 const MODEL_FETCHABLE_TYPES = new Set([
@@ -252,6 +253,36 @@ const EditChannelModal = (props) => {
   const [keyMode, setKeyMode] = useState('append'); // 密钥模式：replace（覆盖）或 append（追加）
   const [isEnterpriseAccount, setIsEnterpriseAccount] = useState(false); // 是否为企业账户
   const [doubaoApiEditUnlocked, setDoubaoApiEditUnlocked] = useState(false); // 豆包渠道自定义 API 地址隐藏入口
+  const getDefaultChannelSettings = () => ({
+    force_format: false,
+    thinking_to_content: false,
+    proxy: '',
+    pass_through_body_enabled: false,
+    system_prompt: '',
+    system_prompt_override: false,
+    byteplus_project_name: '',
+  });
+  const buildChannelSettingsState = (rawSetting) => {
+    let parsedSettings = {};
+    if (rawSetting) {
+      try {
+        parsedSettings = JSON.parse(rawSetting);
+      } catch (error) {
+        console.error('解析渠道设置失败:', error);
+      }
+    }
+    if (
+      !parsedSettings ||
+      typeof parsedSettings !== 'object' ||
+      Array.isArray(parsedSettings)
+    ) {
+      parsedSettings = {};
+    }
+    return {
+      ...getDefaultChannelSettings(),
+      ...parsedSettings,
+    };
+  };
   const redirectModelList = useMemo(() => {
     const mapping = inputs.model_mapping;
     if (typeof mapping !== 'string') return [];
@@ -494,22 +525,20 @@ const EditChannelModal = (props) => {
   };
 
   // 渠道额外设置状态
-  const [channelSettings, setChannelSettings] = useState({
-    force_format: false,
-    thinking_to_content: false,
-    proxy: '',
-    pass_through_body_enabled: false,
-    system_prompt: '',
-    system_prompt_override: false,
-    byteplus_project_name: '',
-  });
+  const [channelSettings, setChannelSettings] = useState(
+    getDefaultChannelSettings(),
+  );
   const showApiConfigCard = true; // 控制是否显示 API 配置卡片
   const getInitValues = () => ({ ...originInputs });
 
   // 处理渠道额外设置的更新
   const handleChannelSettingsChange = (key, value) => {
+    const nextSettings = {
+      ...channelSettings,
+      [key]: value,
+    };
     // 更新内部状态
-    setChannelSettings((prev) => ({ ...prev, [key]: value }));
+    setChannelSettings(nextSettings);
 
     // 同步更新到表单字段
     if (formApiRef.current) {
@@ -520,8 +549,7 @@ const EditChannelModal = (props) => {
     setInputs((prev) => ({ ...prev, [key]: value }));
 
     // 生成setting JSON并更新
-    const newSettings = { ...channelSettings, [key]: value };
-    const settingsJson = JSON.stringify(newSettings);
+    const settingsJson = JSON.stringify(nextSettings);
     handleInputChange('setting', settingsJson);
   };
 
@@ -977,15 +1005,7 @@ const EditChannelModal = (props) => {
       setIsEnterpriseAccount(data.is_enterprise_account || false);
       setBasicModels(getChannelModels(data.type));
       // 同步更新channelSettings状态显示
-      setChannelSettings({
-        force_format: data.force_format,
-        thinking_to_content: data.thinking_to_content,
-        proxy: data.proxy,
-        pass_through_body_enabled: data.pass_through_body_enabled,
-        system_prompt: data.system_prompt,
-        system_prompt_override: data.system_prompt_override || false,
-        byteplus_project_name: data.byteplus_project_name || '',
-      });
+      setChannelSettings(buildChannelSettingsState(data.setting));
       initialModelsRef.current = (data.models || [])
         .map((model) => (model || '').trim())
         .filter(Boolean);
@@ -1367,15 +1387,7 @@ const EditChannelModal = (props) => {
     resolveStatusCodeRiskConfirm(false);
     formApiRef.current?.reset();
     // 重置渠道设置状态
-    setChannelSettings({
-      force_format: false,
-      thinking_to_content: false,
-      proxy: '',
-      pass_through_body_enabled: false,
-      system_prompt: '',
-      system_prompt_override: false,
-      byteplus_project_name: '',
-    });
+    setChannelSettings(getDefaultChannelSettings());
     // 重置密钥模式状态
     setKeyMode('append');
     // 重置企业账户状态
@@ -1770,6 +1782,12 @@ const EditChannelModal = (props) => {
       system_prompt_override: localInputs.system_prompt_override || false,
       byteplus_project_name: localInputs.byteplus_project_name || '',
     };
+    if (
+      requiresByteplusProjectName &&
+      !String(channelExtraSettings.byteplus_region || '').trim()
+    ) {
+      channelExtraSettings.byteplus_region = DEFAULT_BYTEPLUS_REGION;
+    }
     localInputs.setting = JSON.stringify(channelExtraSettings);
 
     // 处理 settings 字段（包括企业账户设置和字段透传控制）
