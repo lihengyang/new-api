@@ -195,6 +195,7 @@ const EditChannelModal = (props) => {
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
+    byteplus_project_name: '',
     settings: '',
     // 仅 Vertex: 密钥格式（存入 settings.vertex_key_type）
     vertex_key_type: 'json',
@@ -499,6 +500,8 @@ const EditChannelModal = (props) => {
     proxy: '',
     pass_through_body_enabled: false,
     system_prompt: '',
+    system_prompt_override: false,
+    byteplus_project_name: '',
   });
   const showApiConfigCard = true; // 控制是否显示 API 配置卡片
   const getInitValues = () => ({ ...originInputs });
@@ -852,6 +855,8 @@ const EditChannelModal = (props) => {
           data.system_prompt = parsedSettings.system_prompt || '';
           data.system_prompt_override =
             parsedSettings.system_prompt_override || false;
+          data.byteplus_project_name =
+            parsedSettings.byteplus_project_name || '';
         } catch (error) {
           console.error('解析渠道设置失败:', error);
           data.force_format = false;
@@ -860,6 +865,7 @@ const EditChannelModal = (props) => {
           data.pass_through_body_enabled = false;
           data.system_prompt = '';
           data.system_prompt_override = false;
+          data.byteplus_project_name = '';
         }
       } else {
         data.force_format = false;
@@ -868,6 +874,7 @@ const EditChannelModal = (props) => {
         data.pass_through_body_enabled = false;
         data.system_prompt = '';
         data.system_prompt_override = false;
+        data.byteplus_project_name = '';
       }
 
       if (data.settings) {
@@ -977,6 +984,7 @@ const EditChannelModal = (props) => {
         pass_through_body_enabled: data.pass_through_body_enabled,
         system_prompt: data.system_prompt,
         system_prompt_override: data.system_prompt_override || false,
+        byteplus_project_name: data.byteplus_project_name || '',
       });
       initialModelsRef.current = (data.models || [])
         .map((model) => (model || '').trim())
@@ -1366,6 +1374,7 @@ const EditChannelModal = (props) => {
       pass_through_body_enabled: false,
       system_prompt: '',
       system_prompt_override: false,
+      byteplus_project_name: '',
     });
     // 重置密钥模式状态
     setKeyMode('append');
@@ -1728,14 +1737,38 @@ const EditChannelModal = (props) => {
       localInputs.other = 'v2.1';
     }
 
+    const requiresByteplusProjectName = Array.isArray(localInputs.models)
+      ? localInputs.models.includes('seedance-virtual-asset-admin')
+      : String(localInputs.models || '')
+          .split(',')
+          .map((model) => model.trim())
+          .includes('seedance-virtual-asset-admin');
+    localInputs.byteplus_project_name = String(
+      localInputs.byteplus_project_name || '',
+    ).trim();
+    if (requiresByteplusProjectName && !localInputs.byteplus_project_name) {
+      showError(t('请输入 BytePlus Project Name'));
+      return;
+    }
+
     // 生成渠道额外设置JSON
-    const channelExtraSettings = {
+    let channelExtraSettings = {};
+    if (localInputs.setting) {
+      try {
+        channelExtraSettings = JSON.parse(localInputs.setting);
+      } catch (error) {
+        console.error('解析setting失败:', error);
+      }
+    }
+    channelExtraSettings = {
+      ...channelExtraSettings,
       force_format: localInputs.force_format || false,
       thinking_to_content: localInputs.thinking_to_content || false,
       proxy: localInputs.proxy || '',
       pass_through_body_enabled: localInputs.pass_through_body_enabled || false,
       system_prompt: localInputs.system_prompt || '',
       system_prompt_override: localInputs.system_prompt_override || false,
+      byteplus_project_name: localInputs.byteplus_project_name || '',
     };
     localInputs.setting = JSON.stringify(channelExtraSettings);
 
@@ -1817,6 +1850,7 @@ const EditChannelModal = (props) => {
     delete localInputs.pass_through_body_enabled;
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
+    delete localInputs.byteplus_project_name;
     delete localInputs.is_enterprise_account;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
@@ -2509,6 +2543,38 @@ const EditChannelModal = (props) => {
                   <Form.Switch field='pass_through_body_enabled' label={t('透传请求体')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('pass_through_body_enabled', value)} extraText={t('启用请求体透传功能')} />
 
                   <Form.Input field='proxy' label={t('代理地址')} placeholder={t('例如: socks5://user:pass@host:port')} onChange={(value) => handleChannelSettingsChange('proxy', value)} showClear extraText={t('用于配置网络代理，支持 socks5 协议')} />
+                  <Form.Input
+                    field='byteplus_project_name'
+                    label={t('BytePlus Project Name')}
+                    placeholder='HenryAPItest'
+                    onChange={(value) =>
+                      handleChannelSettingsChange(
+                        'byteplus_project_name',
+                        value,
+                      )
+                    }
+                    showClear
+                    rules={[
+                      {
+                        validator: (_rule, value) => {
+                          const requiresField = Array.isArray(inputs.models)
+                            ? inputs.models.includes(
+                                'seedance-virtual-asset-admin',
+                              )
+                            : false;
+                          if (
+                            requiresField &&
+                            !String(value || '').trim()
+                          ) {
+                            return new Error(
+                              t('请输入 BytePlus Project Name'),
+                            );
+                          }
+                          return true;
+                        },
+                      },
+                    ]}
+                  />
 
                   <Form.TextArea field='system_prompt' label={t('系统提示词')} placeholder={t('输入系统提示词，用户的系统提示词将优先于此设置')} onChange={(value) => handleChannelSettingsChange('system_prompt', value)} autosize showClear extraText={t('用户优先：如果用户在请求中指定了系统提示词，将优先使用用户的设置')} />
                   <Form.Switch field='system_prompt_override' label={t('系统提示词拼接')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('system_prompt_override', value)} extraText={t('如果用户请求中包含系统提示词，则使用此设置拼接到用户的系统提示词前面')} />
