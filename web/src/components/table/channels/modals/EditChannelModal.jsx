@@ -1750,11 +1750,21 @@ const EditChannelModal = (props) => {
     }
 
     const requiresByteplusProjectName = Array.isArray(localInputs.models)
-      ? localInputs.models.includes('seedance-virtual-asset-admin')
+      ? localInputs.models.some((model) =>
+          [
+            'seedance-virtual-asset-admin',
+            'seedance-real-human-asset-admin',
+          ].includes(model),
+        )
       : String(localInputs.models || '')
           .split(',')
           .map((model) => model.trim())
-          .includes('seedance-virtual-asset-admin');
+          .some((model) =>
+            [
+              'seedance-virtual-asset-admin',
+              'seedance-real-human-asset-admin',
+            ].includes(model),
+          );
     localInputs.byteplus_project_name = String(
       localInputs.byteplus_project_name || '',
     ).trim();
@@ -2576,8 +2586,11 @@ const EditChannelModal = (props) => {
                       {
                         validator: (_rule, value) => {
                           const requiresField = Array.isArray(inputs.models)
-                            ? inputs.models.includes(
-                                'seedance-virtual-asset-admin',
+                            ? inputs.models.some((model) =>
+                                [
+                                  'seedance-virtual-asset-admin',
+                                  'seedance-real-human-asset-admin',
+                                ].includes(model),
                               )
                             : false;
                           if (
