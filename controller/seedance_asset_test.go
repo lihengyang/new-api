@@ -82,6 +82,70 @@ func TestParseSeedanceAssetAdminKeyRequiresAKSK(t *testing.T) {
 	require.EqualError(t, err, "asset admin channel key must use AK|SK format")
 }
 
+func TestPrepareSeedanceAssetPayloadUsesChannelProjectNameForClientVariants(t *testing.T) {
+	testCases := []struct {
+		name            string
+		key             string
+		expectAliasGone bool
+	}{
+		{name: "ProjectName", key: "ProjectName", expectAliasGone: false},
+		{name: "project_name", key: "project_name", expectAliasGone: true},
+		{name: "projectName", key: "projectName", expectAliasGone: true},
+		{name: "projectname", key: "projectname", expectAliasGone: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]any{
+				tc.key:    "client-project",
+				"GroupId": "group-id",
+			}
+
+			err := prepareSeedanceAssetPayload("GetAsset", payload, &seedanceAssetAdminConfig{
+				ProjectName: "server-project",
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, "server-project", payload["ProjectName"])
+			if tc.expectAliasGone {
+				_, exists := payload[tc.key]
+				require.False(t, exists)
+			}
+		})
+	}
+}
+
+func TestPrepareSeedanceAssetPayloadRealHumanValidateUsesChannelProjectName(t *testing.T) {
+	payload := map[string]any{
+		"projectName": "client-project",
+		"SessionId":   "session-id",
+	}
+
+	err := prepareSeedanceAssetPayloadForRoute(
+		"/v1/seedance/real-human/validate-session/create",
+		"CreateVisualValidateSession",
+		payload,
+		&seedanceAssetAdminConfig{
+			ProjectName: "server-project",
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "server-project", payload["ProjectName"])
+	_, exists := payload["projectName"]
+	require.False(t, exists)
+}
+
+func TestPrepareSeedanceAssetPayloadRequiresProjectName(t *testing.T) {
+	payload := map[string]any{
+		"ProjectName": "client-project",
+	}
+
+	err := prepareSeedanceAssetPayload("GetAsset", payload, &seedanceAssetAdminConfig{})
+
+	require.EqualError(t, err, "byteplus_project_name is required on the selected channel")
+}
+
 func TestPrepareSeedanceAssetPayloadCreateAssetGroupDefaultsAIGC(t *testing.T) {
 	payload := map[string]any{
 		"Name":      "group-name",

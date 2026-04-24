@@ -223,9 +223,22 @@ func isSeedanceRealHumanRoute(path string) bool {
 	return strings.HasPrefix(path, "/v1/seedance/real-human/")
 }
 
-func prepareSeedanceAssetPayload(actionName string, payload map[string]any, config *seedanceAssetAdminConfig) error {
+func sanitizeSeedanceAssetProjectName(payload map[string]any, config *seedanceAssetAdminConfig) error {
+	if strings.TrimSpace(config.ProjectName) == "" {
+		return errors.New("byteplus_project_name is required on the selected channel")
+	}
+	delete(payload, "ProjectName")
 	delete(payload, "project_name")
-	forceStringField(payload, "ProjectName", config.ProjectName)
+	delete(payload, "projectName")
+	delete(payload, "projectname")
+	payload["ProjectName"] = config.ProjectName
+	return nil
+}
+
+func prepareSeedanceAssetPayload(actionName string, payload map[string]any, config *seedanceAssetAdminConfig) error {
+	if err := sanitizeSeedanceAssetProjectName(payload, config); err != nil {
+		return err
+	}
 
 	switch actionName {
 	case "CreateAssetGroup":
