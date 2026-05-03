@@ -116,7 +116,20 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+
+	if _, ok, err := ResolveSeedanceIntlBilling(req.Model, info.OriginModelName, req.Metadata); ok && err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request_error", http.StatusBadRequest)
+	}
+
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -132,12 +145,25 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// EstimateBilling returns Seedance 2.0 international billing ratios.
+// For Seedance 2.0 models, ModelRatio should be configured as the no-video
+// 480p/720p base price. This resolver then applies video-input and 1080p
+// adjustments using BytePlus international pricing.
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
+
+	if billingCtx, ok, err := ResolveSeedanceIntlBilling(info.OriginModelName, info.UpstreamModelName, req.Metadata); ok {
+		if err != nil {
+			return nil
+		}
+		return map[string]float64{
+			"seedance_intl_billing": billingCtx.Ratio,
+		}
+	}
+
 	if hasVideoInMetadata(req.Metadata) {
 		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
 			return map[string]float64{"video_input": ratio}

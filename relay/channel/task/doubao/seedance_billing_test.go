@@ -1,0 +1,296 @@
+package doubao
+
+import (
+	"math"
+	"strings"
+	"testing"
+)
+
+func assertRatio(t *testing.T, actual, expected float64) {
+	t.Helper()
+	if math.Abs(actual-expected) > 0.0000001 {
+		t.Fatalf("ratio = %f, want %f", actual, expected)
+	}
+}
+
+func videoMetadata(resolution string) map[string]interface{} {
+	metadata := map[string]interface{}{
+		"content": []interface{}{
+			map[string]interface{}{
+				"type":      "video_url",
+				"video_url": map[string]interface{}{"url": "https://example.com/input.mp4"},
+			},
+		},
+	}
+	if resolution != "" {
+		metadata["resolution"] = resolution
+	}
+	return metadata
+}
+
+func noVideoMetadata(resolution string) map[string]interface{} {
+	metadata := map[string]interface{}{}
+	if resolution != "" {
+		metadata["resolution"] = resolution
+	}
+	return metadata
+}
+
+func TestResolveSeedanceIntlBillingStandardNoVideo720p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-aivision",
+		"",
+		noVideoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.Family != seedanceBillingFamilyStandard {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	if ctx.InputType != seedanceBillingInputNoVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	if ctx.ResolutionGroup != seedanceBillingResolution480p720p {
+		t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
+	}
+	assertRatio(t, ctx.Ratio, 1.0)
+}
+
+func TestResolveSeedanceIntlBillingStandardVideo720p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-xiangpai",
+		"",
+		videoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.InputType != seedanceBillingInputVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	assertRatio(t, ctx.Ratio, 0.0043/0.0070)
+}
+
+func TestResolveSeedanceIntlBillingStandardNoVideo480p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-aivision",
+		"",
+		noVideoMetadata("480p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.Resolution != "480p" {
+		t.Fatalf("resolution = %s", ctx.Resolution)
+	}
+	if ctx.ResolutionGroup != seedanceBillingResolution480p720p {
+		t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
+	}
+	assertRatio(t, ctx.Ratio, 1.0)
+}
+
+func TestResolveSeedanceIntlBillingStandardVideo480p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-xiangpai",
+		"",
+		videoMetadata("480p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.Resolution != "480p" {
+		t.Fatalf("resolution = %s", ctx.Resolution)
+	}
+	if ctx.InputType != seedanceBillingInputVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	assertRatio(t, ctx.Ratio, 0.0043/0.0070)
+}
+
+func TestResolveSeedanceIntlBillingFastNoVideo480p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-fast-aivision",
+		"",
+		noVideoMetadata("480p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.Resolution != "480p" {
+		t.Fatalf("resolution = %s", ctx.Resolution)
+	}
+	if ctx.Family != seedanceBillingFamilyFast {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	assertRatio(t, ctx.Ratio, 1.0)
+}
+
+func TestResolveSeedanceIntlBillingFastVideo480p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-fast-xiangpai",
+		"",
+		videoMetadata("480p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.Resolution != "480p" {
+		t.Fatalf("resolution = %s", ctx.Resolution)
+	}
+	if ctx.InputType != seedanceBillingInputVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
+}
+
+func TestResolveSeedanceIntlBillingStandardNoVideo1080p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-aivision",
+		"",
+		noVideoMetadata("1080p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.ResolutionGroup != seedanceBillingResolution1080p {
+		t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
+	}
+	assertRatio(t, ctx.Ratio, 0.0077/0.0070)
+}
+
+func TestResolveSeedanceIntlBillingStandardVideo1080p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-xiangpai",
+		"",
+		videoMetadata("1080p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.InputType != seedanceBillingInputVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	assertRatio(t, ctx.Ratio, 0.0047/0.0070)
+}
+
+func TestResolveSeedanceIntlBillingFastNoVideo720p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-fast-aivision",
+		"",
+		noVideoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.Family != seedanceBillingFamilyFast {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	assertRatio(t, ctx.Ratio, 1.0)
+}
+
+func TestResolveSeedanceIntlBillingFastVideo720p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-fast-xiangpai",
+		"",
+		videoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.InputType != seedanceBillingInputVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
+}
+
+func TestResolveSeedanceIntlBillingFast1080pRejected(t *testing.T) {
+	_, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-fast-aivision",
+		"",
+		noVideoMetadata("1080p"),
+	)
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if err == nil {
+		t.Fatal("expected fast 1080p to be rejected")
+	}
+	if !strings.Contains(err.Error(), "1080p is not supported") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveSeedanceIntlBillingAssetAdminNotMatched(t *testing.T) {
+	_, ok, err := ResolveSeedanceIntlBilling(
+		"seedance-virtual-asset-admin",
+		"",
+		noVideoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("asset admin model must not match Seedance video billing")
+	}
+
+	_, ok, err = ResolveSeedanceIntlBilling(
+		"seedance-real-human-asset-admin",
+		"",
+		noVideoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("real-human asset admin model must not match Seedance video billing")
+	}
+}
+
+func TestResolveSeedanceIntlBillingUpstreamModelNameMatched(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"custom-customer-alias",
+		"doubao-seedance-2-0-fast-260128",
+		videoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected upstream model name to match Seedance billing")
+	}
+	if ctx.Family != seedanceBillingFamilyFast {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
+}
