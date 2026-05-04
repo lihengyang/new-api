@@ -283,6 +283,53 @@ func prepareSeedanceAssetPayloadForRoute(path string, actionName string, payload
 	return nil
 }
 
+func redactSeedanceAssetString(value string, projectName string) string {
+	if projectName == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, projectName, "[REDACTED]")
+}
+
+func redactSeedanceAssetJSONValue(value any, projectName string) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"ProjectName", "projectName", "project_name", "projectname"} {
+			delete(typed, key)
+		}
+		for key, child := range typed {
+			typed[key] = redactSeedanceAssetJSONValue(child, projectName)
+		}
+		return typed
+	case []any:
+		for i, child := range typed {
+			typed[i] = redactSeedanceAssetJSONValue(child, projectName)
+		}
+		return typed
+	case string:
+		return redactSeedanceAssetString(typed, projectName)
+	default:
+		return value
+	}
+}
+
+func redactSeedanceAssetResponseBody(body []byte, projectName string) []byte {
+	projectName = strings.TrimSpace(projectName)
+	if len(body) == 0 || projectName == "" {
+		return body
+	}
+
+	var payload any
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return []byte(redactSeedanceAssetString(string(body), projectName))
+	}
+	payload = redactSeedanceAssetJSONValue(payload, projectName)
+	redacted, err := common.Marshal(payload)
+	if err != nil {
+		return []byte(redactSeedanceAssetString(string(body), projectName))
+	}
+	return redacted
+}
+
 func buildSeedanceAssetTargetURL(baseURL string, action seedanceAssetAction) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
@@ -475,5 +522,6 @@ func RelaySeedanceAsset(c *gin.Context) {
 		seedanceAssetError(c, http.StatusBadGateway, "server_error", "failed to read upstream response")
 		return
 	}
+	responseBody = redactSeedanceAssetResponseBody(responseBody, config.ProjectName)
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 }

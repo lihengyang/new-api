@@ -55,7 +55,7 @@ func Distribute() func(c *gin.Context) {
 			// Select a channel for the user
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
+			if modelLimitEnable && !shouldSkipTokenModelLimitValidation(c, shouldSelectChannel, modelRequest) {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
@@ -162,6 +162,13 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func shouldSkipTokenModelLimitValidation(c *gin.Context, shouldSelectChannel bool, modelRequest *ModelRequest) bool {
+	return c.GetInt("relay_mode") == relayconstant.RelayModeVideoFetchByID &&
+		!shouldSelectChannel &&
+		modelRequest != nil &&
+		modelRequest.Model == ""
 }
 
 // getModelFromRequest 从请求中读取模型信息

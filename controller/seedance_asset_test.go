@@ -357,3 +357,49 @@ func TestPrepareSeedanceAssetPayloadForRealHumanValidateResultDoesNotInjectGroup
 	require.False(t, hasFilter)
 	require.Nil(t, filter)
 }
+
+func TestRedactSeedanceAssetResponseBodyRemovesProjectNameVariants(t *testing.T) {
+	body := []byte(`{
+		"ProjectName": "HenryAPItest",
+		"Items": [
+			{
+				"projectName": "HenryAPItest",
+				"Message": "created in HenryAPItest"
+			},
+			{
+				"project_name": "HenryAPItest",
+				"Nested": {
+					"projectname": "HenryAPItest",
+					"Note": "HenryAPItest asset"
+				}
+			}
+		]
+	}`)
+
+	redacted := string(redactSeedanceAssetResponseBody(body, "HenryAPItest"))
+
+	require.NotContains(t, redacted, "ProjectName")
+	require.NotContains(t, redacted, "projectName")
+	require.NotContains(t, redacted, "project_name")
+	require.NotContains(t, redacted, "projectname")
+	require.NotContains(t, redacted, "HenryAPItest")
+	require.Contains(t, redacted, "[REDACTED]")
+}
+
+func TestRedactSeedanceAssetResponseBodyReplacesProjectNameInMessages(t *testing.T) {
+	body := []byte(`{"Message":"HenryAPItest validation completed","Code":"OK"}`)
+
+	redacted := string(redactSeedanceAssetResponseBody(body, "HenryAPItest"))
+
+	require.NotContains(t, redacted, "HenryAPItest")
+	require.Contains(t, redacted, "[REDACTED] validation completed")
+	require.Contains(t, redacted, `"Code":"OK"`)
+}
+
+func TestRedactSeedanceAssetResponseBodyFallbackRedactsNonJSON(t *testing.T) {
+	body := []byte(`upstream error for HenryAPItest`)
+
+	redacted := string(redactSeedanceAssetResponseBody(body, "HenryAPItest"))
+
+	require.Equal(t, "upstream error for [REDACTED]", redacted)
+}
