@@ -52,7 +52,7 @@ func seedVideoFetchTask(t *testing.T, userID int, group string) {
 		PrivateData: model.TaskPrivateData{
 			UpstreamTaskID: "upstream_task_123",
 		},
-		Data: json.RawMessage(`{"status":"succeeded","content":{"video_url":"https://example.com/video.mp4"}}`),
+		Data: json.RawMessage(`{"status":"succeeded","content":{"video_url":"https://example.com/video.mp4"},"usage":{"completion_tokens":108900,"total_tokens":108900}}`),
 	}
 	require.NoError(t, model.DB.Create(task).Error)
 }
@@ -85,6 +85,11 @@ func TestVideoFetchSameUserSameGroupSucceeds(t *testing.T) {
 	metadata, ok := body["metadata"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "https://example.com/video.mp4", metadata["url"])
+
+	usage, ok := body["usage"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 108900, usage["completion_tokens"])
+	require.EqualValues(t, 108900, usage["total_tokens"])
 }
 
 func TestVideoFetchSameUserDifferentGroupReturnsNotFound(t *testing.T) {

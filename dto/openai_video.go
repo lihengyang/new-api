@@ -28,6 +28,7 @@ type OpenAIVideo struct {
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
 	Error              *OpenAIVideoError `json:"error,omitempty"`
 	Metadata           map[string]any    `json:"metadata,omitempty"`
+	Usage              *OpenAIVideoUsage `json:"usage,omitempty"`
 }
 
 func (m *OpenAIVideo) SetProgressStr(progress string) {
@@ -45,6 +46,11 @@ func NewOpenAIVideo() *OpenAIVideo {
 		Object: "video",
 		Status: VideoStatusQueued,
 	}
+}
+
+type OpenAIVideoUsage struct {
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type OpenAIVideoError struct {

@@ -383,6 +383,13 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
+	if dResp.Usage.CompletionTokens > 0 || dResp.Usage.TotalTokens > 0 {
+		openAIVideo.Usage = &dto.OpenAIVideoUsage{
+			CompletionTokens: dResp.Usage.CompletionTokens,
+			TotalTokens:      dResp.Usage.TotalTokens,
+		}
+	}
+
 	if dResp.Status == "failed" {
 		openAIVideo.Error = &dto.OpenAIVideoError{
 			Message: dResp.Error.Message,
