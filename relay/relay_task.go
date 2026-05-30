@@ -23,11 +23,16 @@ import (
 )
 
 type TaskSubmitResult struct {
-	UpstreamTaskID string
-	TaskData       []byte
-	Platform       constant.TaskPlatform
-	Quota          int
-	Response       *channel.TaskSubmitResponse
+	UpstreamTaskID    string
+	TaskData          []byte
+	Platform          constant.TaskPlatform
+	Quota             int
+	Response          *channel.TaskSubmitResponse
+	IdempotentReplay  bool
+	ReplayTask        *model.Task
+	ReservationTaskID int64
+	ClientRequestID   string
+	ClientRequestHash string
 	//PerCallPrice   types.PriceData
 }
 
