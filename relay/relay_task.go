@@ -19,6 +19,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -171,6 +172,9 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
 	}
+	if taskErr := validateTaskClientRequestID(c, info); taskErr != nil {
+		return nil, taskErr
+	}
 
 	// 2. 确定模型名称
 	modelName := info.OriginModelName
@@ -282,6 +286,53 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 		Quota:          finalQuota,
 		Response:       submitResponse,
 	}, nil
+}
+
+func validateTaskClientRequestID(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	taskRequest, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+
+	clientRequestID, openAIError := relaycommon.ExtractClientRequestIDFromTaskRequest(taskRequest)
+	if openAIError != nil {
+		return taskErrorFromOpenAIError(*openAIError, http.StatusBadRequest)
+	}
+	if clientRequestID == nil {
+		return nil
+	}
+
+	if info.TaskRelayInfo == nil {
+		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
+	info.ClientRequestID = *clientRequestID
+	if clientRequestHash, err := taskClientRequestHash(c); err == nil {
+		info.ClientRequestHash = clientRequestHash
+	}
+	return nil
+}
+
+func taskClientRequestHash(c *gin.Context) (string, error) {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return "", err
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return "", err
+	}
+	return relaycommon.GenerateClientRequestHash(body)
+}
+
+func taskErrorFromOpenAIError(openAIError types.OpenAIError, statusCode int) *dto.TaskError {
+	return &dto.TaskError{
+		Code:       fmt.Sprint(openAIError.Code),
+		Message:    openAIError.Message,
+		StatusCode: statusCode,
+		LocalError: true,
+		Error:      errors.New(openAIError.Message),
+		Data:       openAIError,
+	}
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

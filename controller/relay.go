@@ -601,6 +601,16 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
+	if taskErr.Code == relaycommon.ClientRequestIDErrorCode {
+		switch openAIError := taskErr.Data.(type) {
+		case types.OpenAIError:
+			c.JSON(taskErr.StatusCode, gin.H{"error": openAIError})
+			return
+		case *types.OpenAIError:
+			c.JSON(taskErr.StatusCode, gin.H{"error": openAIError})
+			return
+		}
+	}
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 
