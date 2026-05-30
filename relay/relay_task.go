@@ -27,6 +27,7 @@ type TaskSubmitResult struct {
 	TaskData       []byte
 	Platform       constant.TaskPlatform
 	Quota          int
+	Response       *channel.TaskSubmitResponse
 	//PerCallPrice   types.PriceData
 }
 
@@ -142,6 +143,14 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 // 构建/发送/解析上游请求 → 提交后计费调整(AdjustBillingOnSubmit)。
 // 控制器负责 defer Refund 和成功后 Settle。
 func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
+	return relayTaskSubmit(c, info, false)
+}
+
+func RelayTaskSubmitNoWrite(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
+	return relayTaskSubmit(c, info, true)
+}
+
+func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteResponse bool) (*TaskSubmitResult, *dto.TaskError) {
 	info.InitChannelMeta(c)
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
@@ -235,7 +244,19 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	c.Header("X-New-Api-Other-Ratios", string(ratiosJSON))
 
 	// 11. 解析响应
-	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
+	var upstreamTaskID string
+	var taskData []byte
+	var submitResponse *channel.TaskSubmitResponse
+	var taskErr *dto.TaskError
+	if noWriteResponse {
+		responseBuilder, ok := adaptor.(channel.TaskNoWriteResponseBuilder)
+		if !ok {
+			return nil, service.TaskErrorWrapperLocal(fmt.Errorf("task adaptor does not support no-write response: %s", platform), "task_no_write_response_unsupported", http.StatusInternalServerError)
+		}
+		upstreamTaskID, taskData, submitResponse, taskErr = responseBuilder.DoResponseNoWrite(c, resp, info)
+	} else {
+		upstreamTaskID, taskData, taskErr = adaptor.DoResponse(c, resp, info)
+	}
 	if taskErr != nil {
 		return nil, taskErr
 	}
@@ -254,6 +275,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		TaskData:       taskData,
 		Platform:       platform,
 		Quota:          finalQuota,
+		Response:       submitResponse,
 	}, nil
 }
 

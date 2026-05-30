@@ -231,6 +231,15 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 
 // DoResponse handles upstream response, returns taskID etc.
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+	taskID, taskData, submitResponse, taskErr := a.DoResponseNoWrite(c, resp, info)
+	if taskErr != nil {
+		return "", nil, taskErr
+	}
+	c.JSON(submitResponse.StatusCode, submitResponse.Body)
+	return taskID, taskData, nil
+}
+
+func (a *TaskAdaptor) DoResponseNoWrite(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, response *channel.TaskSubmitResponse, taskErr *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
@@ -256,8 +265,10 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
 
-	c.JSON(http.StatusOK, ov)
-	return dResp.ID, responseBody, nil
+	return dResp.ID, responseBody, &channel.TaskSubmitResponse{
+		StatusCode: http.StatusOK,
+		Body:       ov,
+	}, nil
 }
 
 // FetchTask fetch task status

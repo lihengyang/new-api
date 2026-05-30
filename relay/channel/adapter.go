@@ -78,6 +78,15 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+type TaskSubmitResponse struct {
+	StatusCode int
+	Body       any
+}
+
+type TaskNoWriteResponseBuilder interface {
+	DoResponseNoWrite(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, response *TaskSubmitResponse, err *dto.TaskError)
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
