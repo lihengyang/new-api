@@ -32,6 +32,7 @@ func (t TaskStatus) ToVideoStatus() string {
 }
 
 const (
+	TaskStatusReserved   TaskStatus = "RESERVED"
 	TaskStatusNotStart   TaskStatus = "NOT_START"
 	TaskStatusSubmitted             = "SUBMITTED"
 	TaskStatusQueued                = "QUEUED"
@@ -40,6 +41,19 @@ const (
 	TaskStatusSuccess               = "SUCCESS"
 	TaskStatusUnknown               = "UNKNOWN"
 )
+
+func (t TaskStatus) IsUpstreamPollable() bool {
+	switch t {
+	case TaskStatusReserved, TaskStatusFailure, TaskStatusSuccess:
+		return false
+	default:
+		return true
+	}
+}
+
+func excludedFromNormalTaskPollingStatuses() []TaskStatus {
+	return []TaskStatus{TaskStatusReserved, TaskStatusFailure, TaskStatusSuccess}
+}
 
 type Task struct {
 	ID                int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
@@ -295,7 +309,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	var tasks []*Task
 	err := DB.Where("progress != ?", "100%").
-		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
+		Where("status NOT IN ?", excludedFromNormalTaskPollingStatuses()).
 		Where("submit_time < ?", cutoffUnix).
 		Order("submit_time").
 		Limit(limit).
@@ -310,7 +324,7 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	err = DB.Where("progress != ?", "100%").Where("status NOT IN ?", excludedFromNormalTaskPollingStatuses()).Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
