@@ -494,11 +494,18 @@ func RelayTask(c *gin.Context) {
 
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
+	var skipTaskErrorRefund bool
 	defer func() {
-		if taskErr != nil && relayInfo.Billing != nil {
+		if taskErr != nil && relayInfo.Billing != nil && !skipTaskErrorRefund {
 			relayInfo.Billing.Refund(c)
 		}
 	}()
+
+	useClientRequestID, taskErr := prepareTaskClientRequestID(c, relayInfo)
+	if taskErr != nil {
+		respondTaskError(c, taskErr)
+		return
+	}
 
 	retryParam := &service.RetryParam{
 		Ctx:        c,
@@ -540,7 +547,11 @@ func RelayTask(c *gin.Context) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		if useClientRequestID {
+			result, taskErr = relay.RelayTaskSubmitNoWrite(c, relayInfo)
+		} else {
+			result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		}
 		if taskErr == nil {
 			break
 		}
@@ -565,34 +576,159 @@ func RelayTask(c *gin.Context) {
 
 	// ── 成功：结算 + 日志 + 插入任务 ──
 	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-			common.SysError("settle task billing error: " + settleErr.Error())
+		if result != nil && result.IdempotentReplay {
+			c.JSON(http.StatusOK, relay.BuildOpenAIVideoFromTask(result.ReplayTask))
+			return
 		}
-		service.LogTaskConsumption(c, relayInfo)
-
-		task := model.InitTask(result.Platform, relayInfo)
-		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-		task.PrivateData.BillingSource = relayInfo.BillingSource
-		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
-		task.PrivateData.TokenId = relayInfo.TokenId
-		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:      relayInfo.PriceData.ModelPrice,
-			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:      relayInfo.PriceData.ModelRatio,
-			OtherRatios:     relayInfo.PriceData.OtherRatios,
-			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
-		}
-		task.Quota = result.Quota
-		task.Data = result.TaskData
-		task.Action = relayInfo.Action
-		if insertErr := task.Insert(); insertErr != nil {
-			common.SysError("insert task error: " + insertErr.Error())
+		taskErr = handleTaskSubmitSuccess(c, relayInfo, result)
+		if taskErr != nil && result != nil && result.ReservationTaskID > 0 {
+			skipTaskErrorRefund = true
 		}
 	}
 
 	if taskErr != nil {
+		if useClientRequestID && !skipTaskErrorRefund {
+			failTaskReservationIfNeeded(taskErr, relayInfo)
+		}
 		respondTaskError(c, taskErr)
+	}
+}
+
+func prepareTaskClientRequestID(c *gin.Context, relayInfo *relaycommon.RelayInfo) (bool, *dto.TaskError) {
+	if c.Request.Method != http.MethodPost || c.Request.URL.Path != "/v1/videos" {
+		return false, nil
+	}
+
+	bodyStorage, err := common.GetBodyStorage(c)
+	if err != nil {
+		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
+			return false, service.TaskErrorWrapperLocal(err, "read_request_body_failed", http.StatusRequestEntityTooLarge)
+		}
+		return false, service.TaskErrorWrapperLocal(err, "read_request_body_failed", http.StatusBadRequest)
+	}
+	body, err := bodyStorage.Bytes()
+	if err != nil {
+		return false, service.TaskErrorWrapperLocal(err, "read_request_body_failed", http.StatusBadRequest)
+	}
+
+	clientRequestID, openAIError, err := relaycommon.ExtractClientRequestIDFromTaskRequestBody(body)
+	if err != nil {
+		return false, nil
+	}
+	if openAIError != nil {
+		return false, taskErrorFromOpenAIError(*openAIError, http.StatusBadRequest)
+	}
+	if clientRequestID == nil {
+		return false, nil
+	}
+
+	if relayInfo.TaskRelayInfo == nil {
+		relayInfo.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
+	relayInfo.ClientRequestID = *clientRequestID
+	if clientRequestHash, err := relaycommon.GenerateClientRequestHash(body); err == nil {
+		relayInfo.ClientRequestHash = clientRequestHash
+	}
+	return true, nil
+}
+
+func handleTaskSubmitSuccess(c *gin.Context, relayInfo *relaycommon.RelayInfo, result *relay.TaskSubmitResult) *dto.TaskError {
+	if result == nil {
+		return service.TaskErrorWrapperLocal(errors.New("task submit result is nil"), "task_submit_result_empty", http.StatusInternalServerError)
+	}
+	if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+		common.SysError("settle task billing error: " + settleErr.Error())
+	}
+	service.LogTaskConsumption(c, relayInfo)
+
+	if result.ReservationTaskID > 0 {
+		if err := finalizeTaskReservation(relayInfo, result); err != nil {
+			common.SysError(fmt.Sprintf("critical task reservation finalize failed: reservation_id=%d task_id=%s error=%s", result.ReservationTaskID, relayInfo.PublicTaskID, err.Error()))
+			return service.TaskErrorWrapperLocal(errors.New("failed to finalize task reservation"), "task_reservation_finalize_failed", http.StatusInternalServerError)
+		}
+		if result.Response == nil {
+			common.SysError(fmt.Sprintf("critical task reservation response missing: reservation_id=%d task_id=%s", result.ReservationTaskID, relayInfo.PublicTaskID))
+			return service.TaskErrorWrapperLocal(errors.New("task submit response is missing"), "task_submit_response_missing", http.StatusInternalServerError)
+		}
+		c.JSON(result.Response.StatusCode, result.Response.Body)
+		return nil
+	}
+
+	task := model.InitTask(result.Platform, relayInfo)
+	applyTaskPrivateData(&task.PrivateData, relayInfo, result)
+	task.Quota = result.Quota
+	task.Data = result.TaskData
+	task.Action = relayInfo.Action
+	if insertErr := task.Insert(); insertErr != nil {
+		common.SysError("insert task error: " + insertErr.Error())
+	}
+	return nil
+}
+
+func finalizeTaskReservation(relayInfo *relaycommon.RelayInfo, result *relay.TaskSubmitResult) error {
+	return model.FinalizeTaskReservation(model.FinalizeTaskReservationParams{
+		ID:        result.ReservationTaskID,
+		Quota:     result.Quota,
+		Action:    relayInfo.Action,
+		Platform:  result.Platform,
+		ChannelId: relayInfo.ChannelId,
+		Properties: model.Properties{
+			OriginModelName:   relayInfo.OriginModelName,
+			UpstreamModelName: relayInfo.UpstreamModelName,
+		},
+		PrivateData: buildTaskPrivateData(relayInfo, result),
+		Data:        result.TaskData,
+	})
+}
+
+func buildTaskPrivateData(relayInfo *relaycommon.RelayInfo, result *relay.TaskSubmitResult) model.TaskPrivateData {
+	privateData := model.TaskPrivateData{}
+	applyTaskPrivateData(&privateData, relayInfo, result)
+	return privateData
+}
+
+func applyTaskPrivateData(privateData *model.TaskPrivateData, relayInfo *relaycommon.RelayInfo, result *relay.TaskSubmitResult) {
+	privateData.UpstreamTaskID = result.UpstreamTaskID
+	privateData.BillingSource = relayInfo.BillingSource
+	privateData.SubscriptionId = relayInfo.SubscriptionId
+	privateData.TokenId = relayInfo.TokenId
+	privateData.BillingContext = &model.TaskBillingContext{
+		ModelPrice:      relayInfo.PriceData.ModelPrice,
+		GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:      relayInfo.PriceData.ModelRatio,
+		OtherRatios:     relayInfo.PriceData.OtherRatios,
+		OriginModelName: relayInfo.OriginModelName,
+		PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+	}
+}
+
+func failTaskReservationIfNeeded(taskErr *dto.TaskError, relayInfo *relaycommon.RelayInfo) {
+	if relayInfo == nil || relayInfo.ReservationTaskID <= 0 {
+		return
+	}
+	failReason := ""
+	if taskErr != nil {
+		failReason = taskErr.Message
+	}
+	if failReason == "" && taskErr != nil && taskErr.Error != nil {
+		failReason = taskErr.Error.Error()
+	}
+	if err := model.FailTaskReservation(model.FailTaskReservationParams{
+		ID:         relayInfo.ReservationTaskID,
+		FailReason: failReason,
+	}); err != nil {
+		common.SysError(fmt.Sprintf("fail task reservation error: reservation_id=%d error=%s", relayInfo.ReservationTaskID, err.Error()))
+	}
+}
+
+func taskErrorFromOpenAIError(openAIError types.OpenAIError, statusCode int) *dto.TaskError {
+	return &dto.TaskError{
+		Code:       fmt.Sprint(openAIError.Code),
+		Message:    openAIError.Message,
+		StatusCode: statusCode,
+		LocalError: true,
+		Error:      errors.New(openAIError.Message),
+		Data:       openAIError,
 	}
 }
 

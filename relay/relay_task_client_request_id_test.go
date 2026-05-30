@@ -3,6 +3,7 @@ package relay
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,7 +27,21 @@ func newTaskClientRequestIDContext(t *testing.T, body string) (*gin.Context, *re
 	c.Request.Header.Set("Content-Type", "application/json")
 	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeDoubaoVideo)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://example.invalid")
-	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	common.SetContextKey(c, constant.ContextKeyChannelId, 77)
+	info := &relaycommon.RelayInfo{
+		UserId:          1001,
+		UsingGroup:      "test-group",
+		TokenId:         501,
+		TokenKey:        "test-token",
+		OriginModelName: "mj_inpaint",
+		UserSetting: dto.UserSetting{
+			AcceptUnsetRatioModel: true,
+			BillingPreference:     "wallet_only",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			PublicTaskID: "task_public_123",
+		},
+	}
 	return c, info
 }
 
@@ -137,4 +152,180 @@ func TestRelayTaskSubmitInvalidClientRequestIDStopsBeforeUpstreamAndBilling(t *t
 	require.EqualValues(t, 0, atomic.LoadInt32(&upstreamCalls))
 	require.Nil(t, info.Billing)
 	require.False(t, c.Writer.Written())
+}
+
+func TestRelayTaskSubmitNoClientRequestIDUsesOldWritePath(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"upstream_task_123"}`))
+	}))
+	defer upstream.Close()
+
+	c, info := newTaskClientRequestIDContext(t, `{"prompt":"hello","model":"seedance"}`)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+
+	result, taskErr := RelayTaskSubmit(c, info)
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	require.Nil(t, result.Response)
+	require.False(t, result.IdempotentReplay)
+	require.True(t, c.Writer.Written())
+	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamCalls))
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestRelayTaskSubmitNoWriteClientRequestIDCreatesReservationBeforeUpstream(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	var upstreamCalls int32
+	var reservationVisibleBeforeUpstream atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		var count int64
+		if err := model.DB.Model(&model.Task{}).
+			Where("token_id = ? AND client_request_id = ? AND status = ?", 501, "req_123", model.TaskStatusReserved).
+			Count(&count).Error; err == nil && count == 1 {
+			reservationVisibleBeforeUpstream.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"upstream_task_123"}`))
+	}))
+	defer upstream.Close()
+
+	c, info := newTaskClientRequestIDContext(t, `{"prompt":"hello","model":"seedance","metadata":{"client_request_id":"req_123"}}`)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+
+	result, taskErr := RelayTaskSubmitNoWrite(c, info)
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Response)
+	require.False(t, result.IdempotentReplay)
+	require.False(t, c.Writer.Written())
+	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamCalls))
+	require.True(t, reservationVisibleBeforeUpstream.Load())
+	require.NotZero(t, result.ReservationTaskID)
+	require.Equal(t, result.ReservationTaskID, info.ReservationTaskID)
+
+	var task model.Task
+	require.NoError(t, model.DB.First(&task, result.ReservationTaskID).Error)
+	require.Equal(t, model.TaskStatusReserved, task.Status)
+	require.Equal(t, info.OriginModelName, task.Properties.OriginModelName)
+	require.Equal(t, "mj_inpaint", task.Properties.OriginModelName)
+	require.Equal(t, "task_public_123", result.Response.Body.(*dto.OpenAIVideo).ID)
+}
+
+func TestRelayTaskSubmitNoWriteDuplicateReplaySkipsUpstreamAndBilling(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	created, err := model.CreateTaskReservation(model.TaskReservationParams{
+		TaskID:          "task_existing",
+		TokenId:         501,
+		ClientRequestID: "req_duplicate",
+		UserId:          1001,
+		Group:           "test-group",
+		ChannelId:       77,
+		Platform:        constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
+		Action:          constant.TaskActionGenerate,
+		OriginModelName: "mj_inpaint",
+	})
+	require.NoError(t, err)
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	c, info := newTaskClientRequestIDContext(t, `{"prompt":"hello","model":"seedance","metadata":{"client_request_id":"req_duplicate"}}`)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+
+	result, taskErr := RelayTaskSubmitNoWrite(c, info)
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	require.True(t, result.IdempotentReplay)
+	require.Equal(t, created.ID, result.ReplayTask.ID)
+	require.EqualValues(t, 0, atomic.LoadInt32(&upstreamCalls))
+	require.Nil(t, info.Billing)
+	require.False(t, c.Writer.Written())
+}
+
+func TestRelayTaskSubmitNoWriteDifferentTokenSameClientRequestIDAllowed(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	_, err := model.CreateTaskReservation(model.TaskReservationParams{
+		TaskID:          "task_existing",
+		TokenId:         500,
+		ClientRequestID: "req_shared",
+		UserId:          1001,
+		Group:           "test-group",
+		ChannelId:       77,
+		Platform:        constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
+		Action:          constant.TaskActionGenerate,
+		OriginModelName: "mj_inpaint",
+	})
+	require.NoError(t, err)
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"upstream_task_123"}`))
+	}))
+	defer upstream.Close()
+
+	c, info := newTaskClientRequestIDContext(t, `{"prompt":"hello","model":"seedance","metadata":{"client_request_id":"req_shared"}}`)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+
+	result, taskErr := RelayTaskSubmitNoWrite(c, info)
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	require.False(t, result.IdempotentReplay)
+	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamCalls))
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("client_request_id = ?", "req_shared").Count(&count).Error)
+	require.EqualValues(t, 2, count)
+}
+
+func TestRelayTaskSubmitNoWriteInternalRetryReusesReservation(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	created, err := model.CreateTaskReservation(model.TaskReservationParams{
+		TaskID:          "task_retry",
+		TokenId:         501,
+		ClientRequestID: "req_retry",
+		UserId:          1001,
+		Group:           "test-group",
+		ChannelId:       77,
+		Platform:        constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
+		Action:          constant.TaskActionGenerate,
+		OriginModelName: "mj_inpaint",
+	})
+	require.NoError(t, err)
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"upstream_task_456"}`))
+	}))
+	defer upstream.Close()
+
+	c, info := newTaskClientRequestIDContext(t, `{"prompt":"hello","model":"seedance","metadata":{"client_request_id":"req_retry"}}`)
+	info.ReservationTaskID = created.ID
+	info.PublicTaskID = created.TaskID
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+
+	result, taskErr := RelayTaskSubmitNoWrite(c, info)
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	require.False(t, result.IdempotentReplay)
+	require.Equal(t, created.ID, result.ReservationTaskID)
+	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamCalls))
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("token_id = ? AND client_request_id = ?", 501, "req_retry").Count(&count).Error)
+	require.EqualValues(t, 1, count)
 }

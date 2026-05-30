@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -27,8 +28,29 @@ func setupRelayTaskTestDB(t *testing.T) {
 	model.LOG_DB = db
 	common.UsingSQLite = true
 	common.RedisEnabled = false
+	service.InitHttpClient()
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
 
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.UserSubscription{}))
+	require.NoError(t, db.Create(&model.User{
+		Id:       1001,
+		Username: "relay-task-test-user",
+		Password: "test-password",
+		Status:   common.UserStatusEnabled,
+		Quota:    1_000_000,
+		Group:    "test-group",
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          501,
+		UserId:      1001,
+		Key:         "test-token",
+		Status:      common.TokenStatusEnabled,
+		Name:        "relay-task-test-token",
+		ExpiredTime: -1,
+		RemainQuota: 1_000_000,
+	}).Error)
 }
 
 func seedVideoFetchTask(t *testing.T, userID int, group string) {

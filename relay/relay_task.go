@@ -194,8 +194,15 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 		info.PublicTaskID = model.GenerateTaskID()
 	}
 
-	// 4. 价格计算：基础模型价格
 	info.OriginModelName = modelName
+	if noWriteResponse && info.ClientRequestID != "" {
+		replayResult, taskErr := reserveTaskClientRequest(info, platform)
+		if taskErr != nil || replayResult != nil {
+			return replayResult, taskErr
+		}
+	}
+
+	// 4. 价格计算：基础模型价格
 	priceData, err := helper.ModelPriceHelperPerCall(c, info)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
@@ -280,12 +287,59 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 	}
 
 	return &TaskSubmitResult{
-		UpstreamTaskID: upstreamTaskID,
-		TaskData:       taskData,
-		Platform:       platform,
-		Quota:          finalQuota,
-		Response:       submitResponse,
+		UpstreamTaskID:    upstreamTaskID,
+		TaskData:          taskData,
+		Platform:          platform,
+		Quota:             finalQuota,
+		Response:          submitResponse,
+		ReservationTaskID: info.ReservationTaskID,
+		ClientRequestID:   info.ClientRequestID,
+		ClientRequestHash: info.ClientRequestHash,
 	}, nil
+}
+
+func reserveTaskClientRequest(info *relaycommon.RelayInfo, platform constant.TaskPlatform) (*TaskSubmitResult, *dto.TaskError) {
+	if info.ReservationTaskID > 0 {
+		return nil, nil
+	}
+
+	task, err := model.CreateTaskReservation(model.TaskReservationParams{
+		TaskID:            info.PublicTaskID,
+		TokenId:           info.TokenId,
+		ClientRequestID:   info.ClientRequestID,
+		ClientRequestHash: info.ClientRequestHash,
+		UserId:            info.UserId,
+		Group:             info.UsingGroup,
+		ChannelId:         info.ChannelId,
+		Platform:          platform,
+		Action:            info.Action,
+		OriginModelName:   info.OriginModelName,
+		UpstreamModelName: info.UpstreamModelName,
+	})
+	if err == nil {
+		info.ReservationTaskID = task.ID
+		return nil, nil
+	}
+
+	if model.IsTaskClientRequestDuplicateError(err) {
+		existing, exists, findErr := model.GetTaskByTokenClientRequestID(info.TokenId, info.ClientRequestID)
+		if findErr != nil {
+			return nil, service.TaskErrorWrapperLocal(findErr, "task_reservation_lookup_failed", http.StatusInternalServerError)
+		}
+		if !exists {
+			return nil, service.TaskErrorWrapperLocal(errors.New("task reservation duplicate not found"), "task_reservation_lookup_failed", http.StatusInternalServerError)
+		}
+		return &TaskSubmitResult{
+			IdempotentReplay:  true,
+			ReplayTask:        existing,
+			ReservationTaskID: existing.ID,
+			ClientRequestID:   info.ClientRequestID,
+			ClientRequestHash: info.ClientRequestHash,
+		}, nil
+	}
+
+	common.SysError("create task reservation error: " + err.Error())
+	return nil, service.TaskErrorWrapperLocal(errors.New("failed to create task reservation"), "task_reservation_create_failed", http.StatusInternalServerError)
 }
 
 func validateTaskClientRequestID(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
