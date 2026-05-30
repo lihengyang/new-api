@@ -155,6 +155,11 @@ func TestHandleTaskSubmitSuccessFinalizesReservationBeforeWritingResponse(t *tes
 
 	require.Nil(t, taskErr)
 	require.Equal(t, http.StatusOK, recorder.Code)
+	require.True(t, c.Writer.Written())
+	var responseBody dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &responseBody))
+	require.Equal(t, reservation.TaskID, responseBody.ID)
+	require.Equal(t, reservation.TaskID, responseBody.TaskID)
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, reservation.ID).Error)
 	require.Equal(t, model.TaskStatusNotStart, reloaded.Status)
@@ -205,4 +210,5 @@ func TestFailTaskReservationIfNeededMarksReservationFailure(t *testing.T) {
 	require.Equal(t, "100%", reloaded.Progress)
 	require.Equal(t, "upstream failed", reloaded.FailReason)
 	require.Zero(t, reloaded.Quota)
+	require.False(t, reloaded.Status.IsUpstreamPollable())
 }

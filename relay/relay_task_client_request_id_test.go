@@ -178,6 +178,8 @@ func TestRelayTaskSubmitNoClientRequestIDUsesOldWritePath(t *testing.T) {
 	var count int64
 	require.NoError(t, model.DB.Model(&model.Task{}).Count(&count).Error)
 	require.Zero(t, count)
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("client_request_id IS NOT NULL").Count(&count).Error)
+	require.Zero(t, count)
 }
 
 func TestRelayTaskSubmitNoWriteClientRequestIDCreatesReservationBeforeUpstream(t *testing.T) {
@@ -215,9 +217,18 @@ func TestRelayTaskSubmitNoWriteClientRequestIDCreatesReservationBeforeUpstream(t
 	var task model.Task
 	require.NoError(t, model.DB.First(&task, result.ReservationTaskID).Error)
 	require.Equal(t, model.TaskStatusReserved, task.Status)
+	require.Equal(t, 501, task.TokenId)
+	require.NotNil(t, task.ClientRequestID)
+	require.Equal(t, "req_123", *task.ClientRequestID)
+	require.NotNil(t, task.ClientRequestHash)
+	require.NotEmpty(t, *task.ClientRequestHash)
+	require.Zero(t, task.Quota)
 	require.Equal(t, info.OriginModelName, task.Properties.OriginModelName)
 	require.Equal(t, "mj_inpaint", task.Properties.OriginModelName)
 	require.Equal(t, "task_public_123", result.Response.Body.(*dto.OpenAIVideo).ID)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Count(&count).Error)
+	require.EqualValues(t, 1, count)
 }
 
 func TestRelayTaskSubmitNoWriteDuplicateReplaySkipsUpstreamAndBilling(t *testing.T) {
@@ -233,6 +244,10 @@ func TestRelayTaskSubmitNoWriteDuplicateReplaySkipsUpstreamAndBilling(t *testing
 		Action:          constant.TaskActionGenerate,
 		OriginModelName: "mj_inpaint",
 	})
+	require.NoError(t, err)
+	var beforeToken model.Token
+	require.NoError(t, model.DB.First(&beforeToken, 501).Error)
+	beforeUserQuota, err := model.GetUserQuota(1001, true)
 	require.NoError(t, err)
 	var upstreamCalls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -250,9 +265,22 @@ func TestRelayTaskSubmitNoWriteDuplicateReplaySkipsUpstreamAndBilling(t *testing
 	require.NotNil(t, result)
 	require.True(t, result.IdempotentReplay)
 	require.Equal(t, created.ID, result.ReplayTask.ID)
+	video := BuildOpenAIVideoFromTask(result.ReplayTask)
+	require.Equal(t, created.TaskID, video.ID)
+	require.Equal(t, created.TaskID, video.TaskID)
 	require.EqualValues(t, 0, atomic.LoadInt32(&upstreamCalls))
 	require.Nil(t, info.Billing)
 	require.False(t, c.Writer.Written())
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("token_id = ? AND client_request_id = ?", 501, "req_duplicate").Count(&count).Error)
+	require.EqualValues(t, 1, count)
+	var afterToken model.Token
+	require.NoError(t, model.DB.First(&afterToken, 501).Error)
+	require.Equal(t, beforeToken.RemainQuota, afterToken.RemainQuota)
+	require.Equal(t, beforeToken.UsedQuota, afterToken.UsedQuota)
+	afterUserQuota, err := model.GetUserQuota(1001, true)
+	require.NoError(t, err)
+	require.Equal(t, beforeUserQuota, afterUserQuota)
 }
 
 func TestRelayTaskSubmitNoWriteDifferentTokenSameClientRequestIDAllowed(t *testing.T) {
