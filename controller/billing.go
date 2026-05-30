@@ -1,12 +1,65 @@
 package controller
 
 import (
+	"net/http"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
+
+type billingBalance struct {
+	Available *float64 `json:"available"`
+	Used      float64  `json:"used"`
+	Unlimited bool     `json:"unlimited"`
+}
+
+type billingBalanceResponse struct {
+	Object    string         `json:"object"`
+	Currency  string         `json:"currency"`
+	Balance   billingBalance `json:"balance"`
+	UpdatedAt int64          `json:"updated_at"`
+}
+
+func quotaToUSD(quota int) float64 {
+	return float64(quota) / common.QuotaPerUnit
+}
+
+func GetBillingBalance(c *gin.Context) {
+	tokenId := c.GetInt("token_id")
+	userId := c.GetInt("id")
+	token, err := model.GetTokenByIds(tokenId, userId)
+	if err != nil {
+		openAIError := types.OpenAIError{
+			Message: "Unable to retrieve billing balance",
+			Type:    "server_error",
+			Code:    "billing_balance_error",
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": openAIError,
+		})
+		return
+	}
+
+	var available *float64
+	if !token.UnlimitedQuota {
+		amount := quotaToUSD(token.RemainQuota)
+		available = &amount
+	}
+
+	c.JSON(http.StatusOK, billingBalanceResponse{
+		Object:   "billing.balance",
+		Currency: "USD",
+		Balance: billingBalance{
+			Available: available,
+			Used:      quotaToUSD(token.UsedQuota),
+			Unlimited: token.UnlimitedQuota,
+		},
+		UpdatedAt: common.GetTimestamp(),
+	})
+}
 
 func GetSubscription(c *gin.Context) {
 	var remainQuota int
