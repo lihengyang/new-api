@@ -1,5 +1,19 @@
 # AGENTS.md — Project Conventions for new-api
 
+## Seedance Context Pack
+
+Before any Seedance/new-api task, read `docs/internal/context-pack/` first.
+
+For current P1 release work, also read `docs/internal/seedance-p1-preflight-rollout-runbook.md`.
+
+Do not rely on chat memory for production, preflight, database, or version facts. Verify production/preflight state through read-only commands before making release assumptions.
+
+Do not expose secrets, SQL_DSN, API keys, AK/SK, customer bearer keys, DB dumps, env files, production logs, or real customer data.
+
+Do not modify production without explicit approval.
+
+Default workflow: local branch -> local tests -> preflight -> production only after explicit approval.
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
