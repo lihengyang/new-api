@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -10,6 +11,8 @@ import (
 )
 
 const TaskClientRequestUniqueIndexName = "idx_tasks_token_client_request"
+
+var ErrTaskReservationNotReserved = errors.New("task reservation not found or no longer reserved")
 
 type TaskReservationParams struct {
 	TaskID            string
@@ -24,6 +27,24 @@ type TaskReservationParams struct {
 	OriginModelName   string
 	UpstreamModelName string
 	SubmitTime        int64
+}
+
+type FinalizeTaskReservationParams struct {
+	ID          int64
+	Quota       int
+	Action      string
+	Platform    constant.TaskPlatform
+	ChannelId   int
+	Properties  Properties
+	PrivateData TaskPrivateData
+	Data        json.RawMessage
+	UpdatedAt   int64
+}
+
+type FailTaskReservationParams struct {
+	ID         int64
+	FailReason string
+	UpdatedAt  int64
 }
 
 func CreateTaskReservation(params TaskReservationParams) (*Task, error) {
@@ -85,6 +106,59 @@ func GetTaskByTokenClientRequestID(tokenID int, clientRequestID string) (*Task, 
 		return nil, false, err
 	}
 	return task, exist, nil
+}
+
+func FinalizeTaskReservation(params FinalizeTaskReservationParams) error {
+	updatedAt := params.UpdatedAt
+	if updatedAt == 0 {
+		updatedAt = time.Now().Unix()
+	}
+
+	result := DB.Model(&Task{}).
+		Where("id = ? AND status = ?", params.ID, TaskStatusReserved).
+		Updates(map[string]any{
+			"status":       TaskStatusNotStart,
+			"progress":     "0%",
+			"quota":        params.Quota,
+			"action":       params.Action,
+			"platform":     params.Platform,
+			"channel_id":   params.ChannelId,
+			"properties":   params.Properties,
+			"private_data": params.PrivateData,
+			"data":         params.Data,
+			"updated_at":   updatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrTaskReservationNotReserved
+	}
+	return nil
+}
+
+func FailTaskReservation(params FailTaskReservationParams) error {
+	updatedAt := params.UpdatedAt
+	if updatedAt == 0 {
+		updatedAt = time.Now().Unix()
+	}
+
+	result := DB.Model(&Task{}).
+		Where("id = ? AND status = ?", params.ID, TaskStatusReserved).
+		Updates(map[string]any{
+			"status":      TaskStatusFailure,
+			"progress":    "100%",
+			"quota":       0,
+			"fail_reason": params.FailReason,
+			"updated_at":  updatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrTaskReservationNotReserved
+	}
+	return nil
 }
 
 func IsTaskClientRequestDuplicateError(err error) bool {
