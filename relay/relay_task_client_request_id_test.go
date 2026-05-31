@@ -23,6 +23,7 @@ func newTaskClientRequestIDContext(t *testing.T, body string) (*gin.Context, *re
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
+	c.Set("test_recorder", recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeDoubaoVideo)
@@ -175,6 +176,12 @@ func TestRelayTaskSubmitNoClientRequestIDUsesOldWritePath(t *testing.T) {
 	require.False(t, result.IdempotentReplay)
 	require.True(t, c.Writer.Written())
 	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamCalls))
+	recorderValue, exists := c.Get("test_recorder")
+	require.True(t, exists)
+	recorder := recorderValue.(*httptest.ResponseRecorder)
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &video))
+	require.NotContains(t, video.Metadata, "client_request_id")
 	var count int64
 	require.NoError(t, model.DB.Model(&model.Task{}).Count(&count).Error)
 	require.Zero(t, count)

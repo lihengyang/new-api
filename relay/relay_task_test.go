@@ -58,15 +58,16 @@ func seedVideoFetchTask(t *testing.T, userID int, group string) {
 
 	now := time.Now().Unix()
 	task := &model.Task{
-		TaskID:    "task_public",
-		UserId:    userID,
-		Group:     group,
-		ChannelId: 77,
-		Platform:  constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
-		Status:    model.TaskStatusSuccess,
-		Progress:  "100%",
-		CreatedAt: now,
-		UpdatedAt: now,
+		TaskID:          "task_public",
+		UserId:          userID,
+		Group:           group,
+		ChannelId:       77,
+		Platform:        constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
+		Status:          model.TaskStatusSuccess,
+		Progress:        "100%",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ClientRequestID: strPtr("req_fetch"),
 		Properties: model.Properties{
 			OriginModelName:   "doubao-seedance-2-0-260128",
 			UpstreamModelName: "doubao-seedance-2-0-260128",
@@ -107,11 +108,17 @@ func TestVideoFetchSameUserSameGroupSucceeds(t *testing.T) {
 	metadata, ok := body["metadata"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "https://example.com/video.mp4", metadata["url"])
+	require.Equal(t, "req_fetch", metadata["client_request_id"])
 
 	usage, ok := body["usage"].(map[string]any)
 	require.True(t, ok)
 	require.EqualValues(t, 108900, usage["completion_tokens"])
 	require.EqualValues(t, 108900, usage["total_tokens"])
+	bodyString := string(respBody)
+	require.NotContains(t, bodyString, "token_id")
+	require.NotContains(t, bodyString, "private_data")
+	require.NotContains(t, bodyString, "ProjectName")
+	require.NotContains(t, bodyString, "upstream_task_123")
 }
 
 func TestVideoFetchSameUserDifferentGroupReturnsNotFound(t *testing.T) {

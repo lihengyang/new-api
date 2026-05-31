@@ -22,9 +22,7 @@ func BuildOpenAIVideoFromTask(task *model.Task) *dto.OpenAIVideo {
 		video.CreatedAt = task.SubmitTime
 	}
 
-	if task.ClientRequestID != nil {
-		video.SetMetadata("client_request_id", *task.ClientRequestID)
-	}
+	EnsureOpenAIVideoTaskClientRequestID(video, task)
 
 	if isOpenAIVideoTaskTerminal(video.Status) {
 		if task.FinishTime != 0 {
@@ -39,6 +37,48 @@ func BuildOpenAIVideoFromTask(task *model.Task) *dto.OpenAIVideo {
 	}
 
 	return video
+}
+
+func EnsureOpenAIVideoClientRequestID(video *dto.OpenAIVideo, clientRequestID string) {
+	if video == nil || clientRequestID == "" {
+		return
+	}
+	video.SetMetadata("client_request_id", clientRequestID)
+}
+
+func EnsureOpenAIVideoTaskClientRequestID(video *dto.OpenAIVideo, task *model.Task) {
+	if task == nil || task.ClientRequestID == nil {
+		return
+	}
+	EnsureOpenAIVideoClientRequestID(video, *task.ClientRequestID)
+}
+
+func EnsureOpenAIVideoResponseBodyClientRequestID(body any, clientRequestID string) any {
+	if clientRequestID == "" {
+		return body
+	}
+	switch video := body.(type) {
+	case *dto.OpenAIVideo:
+		EnsureOpenAIVideoClientRequestID(video, clientRequestID)
+		return video
+	case dto.OpenAIVideo:
+		EnsureOpenAIVideoClientRequestID(&video, clientRequestID)
+		return video
+	default:
+		return body
+	}
+}
+
+func EnsureOpenAIVideoResponseBytesTaskClientRequestID(respBody []byte, task *model.Task) ([]byte, error) {
+	if task == nil || task.ClientRequestID == nil {
+		return respBody, nil
+	}
+	var video dto.OpenAIVideo
+	if err := common.Unmarshal(respBody, &video); err != nil {
+		return nil, err
+	}
+	EnsureOpenAIVideoTaskClientRequestID(&video, task)
+	return common.Marshal(video)
 }
 
 func openAIVideoStatusFromTaskStatus(status model.TaskStatus) string {

@@ -147,6 +147,7 @@ func TestHandleTaskSubmitSuccessFinalizesReservationBeforeWritingResponse(t *tes
 		Platform:          constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
 		Quota:             123,
 		ReservationTaskID: reservation.ID,
+		ClientRequestID:   "req_controller",
 		Response: &channel.TaskSubmitResponse{
 			StatusCode: http.StatusOK,
 			Body:       video,
@@ -160,6 +161,7 @@ func TestHandleTaskSubmitSuccessFinalizesReservationBeforeWritingResponse(t *tes
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &responseBody))
 	require.Equal(t, reservation.TaskID, responseBody.ID)
 	require.Equal(t, reservation.TaskID, responseBody.TaskID)
+	require.Equal(t, "req_controller", responseBody.Metadata["client_request_id"])
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, reservation.ID).Error)
 	require.Equal(t, model.TaskStatusNotStart, reloaded.Status)

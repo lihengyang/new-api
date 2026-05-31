@@ -137,17 +137,19 @@ func TestBuildOpenAIVideoFromTaskPreservesSafeCompletedFields(t *testing.T) {
 	})
 	require.NoError(t, err)
 	task := &model.Task{
-		TaskID:    "task_completed",
-		Status:    model.TaskStatusSuccess,
-		Progress:  "100%",
-		UpdatedAt: 123,
-		Data:      data,
+		TaskID:          "task_completed",
+		Status:          model.TaskStatusSuccess,
+		Progress:        "100%",
+		UpdatedAt:       123,
+		ClientRequestID: strPtr("req_completed"),
+		Data:            data,
 	}
 
 	video := BuildOpenAIVideoFromTask(task)
 
 	require.Equal(t, dto.VideoStatusCompleted, video.Status)
 	require.Equal(t, "https://example.com/from-data.mp4", video.Metadata["url"])
+	require.Equal(t, "req_completed", video.Metadata["client_request_id"])
 	require.NotNil(t, video.Usage)
 	require.Equal(t, 12, video.Usage.CompletionTokens)
 	require.Equal(t, 34, video.Usage.TotalTokens)

@@ -650,6 +650,7 @@ func handleTaskSubmitSuccess(c *gin.Context, relayInfo *relaycommon.RelayInfo, r
 			common.SysError(fmt.Sprintf("critical task reservation response missing: reservation_id=%d task_id=%s", result.ReservationTaskID, relayInfo.PublicTaskID))
 			return service.TaskErrorWrapperLocal(errors.New("task submit response is missing"), "task_submit_response_missing", http.StatusInternalServerError)
 		}
+		result.Response.Body = relay.EnsureOpenAIVideoResponseBodyClientRequestID(result.Response.Body, result.ClientRequestID)
 		c.JSON(result.Response.StatusCode, result.Response.Body)
 		return nil
 	}
