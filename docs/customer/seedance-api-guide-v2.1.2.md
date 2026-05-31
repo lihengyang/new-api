@@ -96,8 +96,10 @@ Recommended workflow:
 
 1. Create the video task with `POST /v1/videos`.
 2. Store the returned `task_id`.
-3. Poll `GET /v1/videos/{task_id}` until `status` is `completed` or `failed`.
-4. When completed, read the video URL from the response metadata.
+3. Poll `GET /v1/videos/{task_id}` every 30 seconds or longer until `status` is `completed` or `failed`.
+4. For longer videos or high-load periods, use a 45-60 second polling interval.
+5. Stop polling when `status` is `completed` or `failed`.
+6. When completed, read the video URL from the response metadata.
 
 ## Optional client_request_id
 

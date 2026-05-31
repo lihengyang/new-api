@@ -36,6 +36,18 @@ Wrong: production, preflight, image, or DB facts can be answered from memory.
 
 Correct: verify with read-only commands and current docs.
 
+Wrong: local Docker build architecture is automatically suitable for production.
+
+Correct: production is `linux/amd64`; Apple Silicon builds must explicitly target `linux/amd64`, and image architecture must be inspected before deployment.
+
+Wrong: shell pipeline `curl | tee | python3 - << heredoc` is a safe JSON parsing pattern.
+
+Correct: heredoc consumes stdin; save the response to a file with `curl -o`, then parse the file.
+
+Wrong: customers should poll video tasks every few seconds.
+
+Correct: customer docs should recommend 30 seconds or longer for Seedance 2.0 polling, and 45-60 seconds for longer videos or high-load periods.
+
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.

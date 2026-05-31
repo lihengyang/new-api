@@ -4,6 +4,10 @@ Verified environment facts:
 
 - Production container: `new-api-nightly`
 - Production current image before P1 deployment: `new-api:seedance-usage-response-rc1`
+- Production server hosting: BytePlus Hong Kong cloud
+- Verified production server architecture: `x86_64` / `linux/amd64`
+- Production/preflight deployment images should be built as `linux/amd64`
+- When building from Apple Silicon local machines, use `docker buildx build --platform linux/amd64`
 - Production DB: MySQL 8.0.43-34
 - Production DB name: `lsf_newapi_prod`
 - Production DB fingerprint: `1e7c66a33168567c`

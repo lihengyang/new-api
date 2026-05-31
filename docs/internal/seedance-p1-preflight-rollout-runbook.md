@@ -115,8 +115,29 @@ Expected:
 ### Poll Video Task
 
 ```bash
-curl -sS <BASE_URL>/v1/videos/<TASK_ID> \
-  -H "Authorization: Bearer <LSF_API_KEY>"
+TASK_RESPONSE=/tmp/seedance-p1-task.json
+HTTP_STATUS=$(curl -sS -o "$TASK_RESPONSE" -w "HTTP_STATUS=%{http_code}" \
+  <BASE_URL>/v1/videos/<TASK_ID> \
+  -H "Authorization: Bearer <LSF_API_KEY>")
+
+printf '%s\n' "$HTTP_STATUS"
+
+python3 - "$TASK_RESPONSE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    body = json.load(f)
+
+metadata = body.get("metadata") or {}
+usage = body.get("usage") or {}
+
+print("task_id=%s" % body.get("task_id"))
+print("status=%s" % body.get("status"))
+print("has_client_request_id=%s" % ("client_request_id" in metadata))
+print("has_url=%s" % bool(metadata.get("url")))
+print("has_usage=%s" % bool(usage))
+PY
 ```
 
 Expected:
@@ -124,6 +145,11 @@ Expected:
 - response returns the requested task
 - polling remains the recommended workflow
 - task eventually reaches `completed` or `failed`
+- do not print full video URLs; print only `has_url=True` or `has_url=False`
+
+Do not use `curl | tee file | python3 - <<'PY'` for JSON parsing. The heredoc consumes Python stdin. Save the response with `curl -o`, then parse the saved file.
+
+This polling command is for internal preflight smoke testing. Customer guidance remains 30 seconds or longer, and 45-60 seconds for longer videos or high-load periods.
 
 ### Video Task With Valid client_request_id
 
