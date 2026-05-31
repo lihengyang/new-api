@@ -144,3 +144,17 @@ For request structs that are parsed from client JSON and then re-marshaled to up
   - field absent in client JSON => `nil` => omitted on marshal;
   - field explicitly set to zero/false => non-`nil` pointer => must still be sent upstream.
 - Avoid using non-pointer scalars with `omitempty` for optional request parameters, because zero values (`0`, `0.0`, `false`) will be silently dropped during marshal.
+
+## LSF / Seedance Required Context
+
+For any Light Speed Future / Seedance / new-api task, read these files first:
+
+1. `docs/internal/context-pack/00-current-baseline.md`
+2. `docs/internal/context-pack/01-environments.md`
+3. `docs/internal/context-pack/05-release-workflow.md`
+4. `docs/internal/context-pack/06-common-wrong-assumptions.md`
+5. Latest release record under `docs/internal/releases/`
+6. For customer-facing API documentation:
+   `docs/customer/Light_Speed_Future_API_Integration_Guide_v2.1.2.docx`
+
+Do not rely on memory only. Confirm current production/preflight image, DB target, schema, and rollout state from repo docs and read-only server checks before making release decisions.

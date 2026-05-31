@@ -51,3 +51,34 @@ Correct: customer docs should recommend 30 seconds or longer for Seedance 2.0 po
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.
+
+## Customer Guide Source of Truth
+
+Wrong: The latest customer API guide can be reconstructed from memory or old drafts.
+
+Correct: The customer-facing guide for the P1 production rollout is:
+
+`docs/customer/Light_Speed_Future_API_Integration_Guide_v2.1.2.docx`
+
+It includes:
+
+- company website: `https://lightspeedfuture.com`
+- API base URL: `https://ai-api.lightspeedfuture.com`
+- `POST /v1/videos`
+- `GET /v1/videos/{task_id}`
+- `GET /v1/billing/balance`
+- optional `metadata.client_request_id`
+- 30s+ polling guidance
+- Common Video Generation Examples
+- Asset Library overview and paths
+- ProjectName prohibition
+- no model field for Asset Library
+- LSF contact: Telegram `@HenryBroG`, email `info@lightspeedfuture.com`
+
+## Production Release Source of Truth
+
+Wrong: Production runtime state can be inferred from memory.
+
+Correct: Production state must be confirmed from repo release records and read-only server checks. The 2026-05-31 P1 rollout record is:
+
+`docs/internal/releases/2026-05-31-seedance-p1-client-request-rc2.md`
