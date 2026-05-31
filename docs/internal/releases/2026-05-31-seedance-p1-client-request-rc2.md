@@ -57,3 +57,5 @@ Final customer-facing document:
 - `docs/customer/Light_Speed_Future_API_Integration_Guide_v2.1.2.docx`
 
 This is the customer delivery guide for the P1 production rollout unless superseded by a later version.
+
+This Patch R documentation-only update introduces no new customer-facing API behavior. The underlying P1 release did introduce customer-facing behavior, including `GET /v1/billing/balance` and optional `metadata.client_request_id` idempotency for `POST /v1/videos`, which is already reflected in `Light_Speed_Future_API_Integration_Guide_v2.1.2.docx`. Therefore, no new customer guide version is required for this docs-only patch.

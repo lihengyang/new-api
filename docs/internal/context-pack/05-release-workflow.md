@@ -10,6 +10,7 @@ Default workflow:
 6. MySQL schema verification
 7. smoke tests
 8. production only after explicit approval
+9. post-release documentation sync after production validation
 
 Current P1 rollout requires MySQL preflight validation.
 
@@ -35,3 +36,22 @@ Release gate should include:
 - `GET` task polling
 - stale `RESERVED` query
 - explicit approval
+
+## Post-release Documentation Sync
+
+After production validation succeeds, run a docs-only Patch R follow-up. Do not rely on chat memory alone; read the context pack and latest release record first.
+
+Documents to review and update:
+
+- `AGENTS.md`
+- `docs/internal/context-pack/*.md`
+- latest `docs/internal/releases/*.md`
+- relevant internal runbooks under `docs/internal/*runbook*.md`
+- customer-facing docs under `docs/customer/*` only when customer behavior or guidance changed
+- reusable templates under `docs/internal/templates/*` when a new release process pattern is established
+
+Patch R review should be performed by the release owner or operator who validated production. If customer-facing documentation is touched, review it specifically for leakage of internal routing, DB, billing, channel, group, credential, or upstream implementation details.
+
+If no customer-facing behavior changed, do not create a new customer guide. Record that the current customer guide remains valid.
+
+Patch R must not modify source code, tests, migrations, Docker files, deployment scripts, production config, CI config, runtime state, secrets, DB dumps, logs, or environment files.

@@ -14,6 +14,8 @@ Do not modify production without explicit approval.
 
 Default workflow: local branch -> local tests -> preflight -> production only after explicit approval.
 
+After a successful Light Speed Future / Seedance release, run Patch R as a docs-only follow-up. Read the context pack and latest release record first, update repo documentation from verified facts rather than chat memory, never expose secrets or internal routing details, and do not modify production from a documentation task.
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
@@ -158,3 +160,5 @@ For any Light Speed Future / Seedance / new-api task, read these files first:
    `docs/customer/Light_Speed_Future_API_Integration_Guide_v2.1.2.docx`
 
 Do not rely on memory only. Confirm current production/preflight image, DB target, schema, and rollout state from repo docs and read-only server checks before making release decisions.
+
+After production validation succeeds, perform a post-release documentation sync using `docs/internal/templates/post-release-docs-sync-template.md`. This follow-up must stay docs-only and must not change source code, tests, migrations, Docker files, deployment config, CI config, runtime settings, or production state.

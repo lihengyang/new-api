@@ -36,6 +36,10 @@ Wrong: production, preflight, image, or DB facts can be answered from memory.
 
 Correct: verify with read-only commands and current docs.
 
+Wrong: post-release documentation can be reconstructed from old chat memory.
+
+Correct: post-release docs must reflect current repo facts from the context pack, latest release record, and read-only verification. For the current P1 release, production/preflight are MySQL; do not reintroduce SQLite assumptions except when explicitly describing legacy cold-backup or rollback reference context.
+
 Wrong: local Docker build architecture is automatically suitable for production.
 
 Correct: production is `linux/amd64`; Apple Silicon builds must explicitly target `linux/amd64`, and image architecture must be inspected before deployment.
