@@ -251,6 +251,68 @@ func TestResolveSeedanceIntlBillingFast1080pRejected(t *testing.T) {
 	}
 }
 
+func TestResolveSeedanceIntlBillingMiniNoVideo720p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"dreamina-seedance-2.0-mini",
+		"",
+		noVideoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.Family != seedanceBillingFamilyMini {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	if ctx.InputType != seedanceBillingInputNoVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	if ctx.UnitPriceUsdPerK != 0.0035 {
+		t.Fatalf("unit price = %f", ctx.UnitPriceUsdPerK)
+	}
+	assertRatio(t, ctx.Ratio, 1.0)
+}
+
+func TestResolveSeedanceIntlBillingMiniVideo720p(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"dreamina-seedance-2.0-mini",
+		"",
+		videoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if ctx.InputType != seedanceBillingInputVideo {
+		t.Fatalf("input type = %s", ctx.InputType)
+	}
+	if ctx.UnitPriceUsdPerK != 0.0021 {
+		t.Fatalf("unit price = %f", ctx.UnitPriceUsdPerK)
+	}
+	assertRatio(t, ctx.Ratio, 0.0021/0.0035)
+}
+
+func TestResolveSeedanceIntlBillingMini1080pRejected(t *testing.T) {
+	_, ok, err := ResolveSeedanceIntlBilling(
+		"dreamina-seedance-2.0-mini",
+		"",
+		noVideoMetadata("1080p"),
+	)
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if err == nil {
+		t.Fatal("expected mini 1080p to be rejected")
+	}
+	if !strings.Contains(err.Error(), "1080p is not supported") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestResolveSeedanceIntlBillingAssetAdminNotMatched(t *testing.T) {
 	_, ok, err := ResolveSeedanceIntlBilling(
 		"seedance-virtual-asset-admin",

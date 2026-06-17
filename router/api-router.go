@@ -203,6 +203,11 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
+		adminInternalRoute := apiRouter.Group("/admin")
+		adminInternalRoute.Use(middleware.AdminAuth())
+		{
+			adminInternalRoute.POST("/moderation/diagnose", controller.ModerationDiagnose)
+		}
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
 		{
