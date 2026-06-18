@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const (
@@ -328,8 +329,12 @@ func resolveModerationDiagnoseManual(req moderationDiagnoseRequest) (int, string
 func findModerationDiagnoseTask(lookupID string) (*model.Task, error) {
 	if numericID, err := strconv.ParseInt(lookupID, 10, 64); err == nil && numericID > 0 {
 		var task model.Task
-		if err := model.DB.Where("id = ?", numericID).First(&task).Error; err == nil {
+		err := model.DB.Where("id = ?", numericID).First(&task).Error
+		if err == nil {
 			return &task, nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
 	}
 

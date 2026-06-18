@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -117,6 +118,32 @@ func TestResolveModerationDiagnoseVideoTaskRejectsMismatchedChannel(t *testing.T
 	require.Equal(t, task.ID, mustParseInt64(t, recordID))
 	require.Nil(t, resolved)
 	require.Nil(t, queries)
+}
+
+func TestFindModerationDiagnoseTaskReturnsNumericLookupDatabaseError(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	createModerationDiagnoseTask(t, "123", 45, map[string]any{
+		"id": "cgt-upstream-generation",
+	})
+
+	expectedErr := errors.New("numeric lookup failed")
+	queryCount := 0
+	callbackName := "test:moderation-diagnose-fail-first-query"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		queryCount++
+		if queryCount == 1 {
+			tx.AddError(expectedErr)
+		}
+	}))
+	t.Cleanup(func() {
+		_ = model.DB.Callback().Query().Remove(callbackName)
+	})
+
+	task, err := findModerationDiagnoseTask("123")
+
+	require.Nil(t, task)
+	require.ErrorIs(t, err, expectedErr)
+	require.Equal(t, 1, queryCount)
 }
 
 func TestRecordModerationDiagnoseAuditDoesNotPersistRawOrCredentials(t *testing.T) {
