@@ -250,9 +250,9 @@ func resolveModerationDiagnoseVideoTask(req moderationDiagnoseRequest) (int, str
 		return 0, lookupID, nil, nil, err
 	}
 
-	channelID := req.ChannelID
-	if channelID == 0 {
-		channelID = task.ChannelId
+	channelID := task.ChannelId
+	if req.ChannelID != 0 && req.ChannelID != channelID {
+		return channelID, strconv.FormatInt(task.ID, 10), nil, nil, errors.New("channel_id does not match the task record")
 	}
 
 	upstreamGenerationID := extractTaskDataString(task.Data, []string{"id", "Id", "ID"}, "cgt-")

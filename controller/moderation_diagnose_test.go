@@ -1,11 +1,14 @@
 package controller
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -15,12 +18,18 @@ func setupModerationDiagnoseTestDB(t *testing.T) {
 	t.Helper()
 
 	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	originalRedisEnabled := common.RedisEnabled
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.User{}, &model.Log{}))
 	model.DB = db
+	model.LOG_DB = db
+	common.RedisEnabled = false
 	t.Cleanup(func() {
 		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		common.RedisEnabled = originalRedisEnabled
 	})
 }
 
@@ -90,4 +99,70 @@ func TestResolveModerationDiagnoseVideoTaskDoesNotUsePublicTaskIDAsUpstreamGener
 	require.NoError(t, err)
 	require.Equal(t, "", resolved["upstream_generation_id"])
 	require.Empty(t, queries)
+}
+
+func TestResolveModerationDiagnoseVideoTaskRejectsMismatchedChannel(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	task := createModerationDiagnoseTask(t, "task_channel_bound", 45, map[string]any{
+		"id": "cgt-upstream-generation",
+	})
+
+	channelID, recordID, resolved, queries, err := resolveModerationDiagnoseVideoTask(moderationDiagnoseRequest{
+		RecordID:  task.TaskID,
+		ChannelID: 99,
+	})
+
+	require.EqualError(t, err, "channel_id does not match the task record")
+	require.Equal(t, task.ChannelId, channelID)
+	require.Equal(t, task.ID, mustParseInt64(t, recordID))
+	require.Nil(t, resolved)
+	require.Nil(t, queries)
+}
+
+func TestRecordModerationDiagnoseAuditDoesNotPersistRawOrCredentials(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+
+	admin := model.User{
+		Username: "diagnose-admin",
+		Password: "unused-password",
+		Role:     common.RoleAdminUser,
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(&admin).Error)
+
+	c, _ := gin.CreateTestContext(nil)
+	c.Set("id", admin.Id)
+	c.Set("username", admin.Username)
+
+	response := &moderationDiagnoseResponse{
+		SourceType: moderationDiagnoseSourceVideoTask,
+		RecordID:   "123",
+		ChannelID:  45,
+		ResolvedQuery: moderationDiagnoseQuery{
+			ID:   "cgt-upstream-generation",
+			Type: moderationDiagnoseTypeTaskID,
+		},
+		RawRequestBody: `{"ProjectName":"project-placeholder","credential":"credential-placeholder"}`,
+		RawResponse:    `{"moderation":"raw-response-placeholder"}`,
+	}
+	recordModerationDiagnoseAudit(c, moderationDiagnoseRequest{
+		SourceType: moderationDiagnoseSourceVideoTask,
+		RecordID:   "task_public",
+	}, response, 0, nil)
+
+	var auditLog model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeManage).First(&auditLog).Error)
+	require.NotEmpty(t, auditLog.Other)
+	require.NotContains(t, auditLog.Other, "project-placeholder")
+	require.NotContains(t, auditLog.Other, "credential-placeholder")
+	require.NotContains(t, auditLog.Other, "raw-response-placeholder")
+	require.True(t, strings.Contains(auditLog.Other, "cgt-upstream-generation"))
+}
+
+func mustParseInt64(t *testing.T, value string) int64 {
+	t.Helper()
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	require.NoError(t, err)
+	return parsed
 }
