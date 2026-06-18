@@ -217,7 +217,10 @@ Commit `12f0857f` database findings:
 - Raw moderation request/response bodies, channel credentials, and ProjectName are not written to the audit log.
 - Existing tests used in-memory SQLite and did not provide a real MySQL integration test.
 
-One correctness issue was found: `video_task` requests could override the task row's persisted `channel_id`, allowing a task identifier to be queried through a different channel configuration. Local follow-up commit `12ddf656` makes the stored task channel authoritative and adds focused tests for channel mismatch rejection and audit-log sensitive-field exclusion.
+Two correctness issues were found:
+
+- `video_task` requests could override the task row's persisted `channel_id`, allowing a task identifier to be queried through a different channel configuration. Local follow-up commit `12ddf656` makes the stored task channel authoritative and adds focused tests for channel mismatch rejection and audit-log sensitive-field exclusion.
+- Numeric record lookup ignored non-`record not found` errors from its first GORM query before falling back to `task_id`. Local follow-up commit `2550bbc0` now returns the database error immediately and adds a regression test.
 
 Database conclusion:
 
