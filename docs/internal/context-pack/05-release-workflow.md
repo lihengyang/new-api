@@ -12,6 +12,19 @@ Default workflow:
 8. production only after explicit approval
 9. post-release documentation sync after production validation
 
+## Knowledge-first Workflow
+
+Before LSF/new-api work, read `AGENTS.md`, the complete context pack, `docs/internal/releases/README.md`, the current release record and runbook, and relevant findings. Do not treat temporary chat memory as a source of truth.
+
+When current code, authorized read-only environment evidence, or Henry's latest explicit confirmation conflicts with the knowledge base:
+
+1. report the old information
+2. report the latest fact
+3. cite the code/environment/user-confirmation evidence
+4. identify the files that should be updated
+
+Current evidence and Henry's latest explicit confirmation take precedence over old historical documents. Preserve release history, but mark superseded operational guidance clearly.
+
 Current P1 rollout requires MySQL preflight validation.
 
 SQLite-only validation is not sufficient for the current MySQL production rollout.

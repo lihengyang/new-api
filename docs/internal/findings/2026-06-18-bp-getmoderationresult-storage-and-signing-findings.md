@@ -12,7 +12,7 @@ Scope: exploration only. No production, preflight, Docker, DB, or runtime state 
 - Upstream request IDs are not explicitly captured from headers or response metadata. They may only survive opportunistically if the upstream JSON body itself contains a request ID and is stored in `tasks.data`.
 - Asset Library calls are currently pass-through relay calls. There is no local material asset table/model and no durable local store for `asset_id`, `request_id`, raw asset responses, or failed asset registration records.
 - Existing no-SDK Ark signing for Asset Library can be reused for BP moderation queries, but it is currently controller-private and should be extracted or wrapped before a productized tool.
-- The current working tree already contains uncommitted backend/frontend `moderation_diagnose` code. Treat it as pre-existing branch state, not a completed approved product. It also uses an action name that does not match the handoff.
+- Commit `12f0857f` contains the backend/frontend `moderation_diagnose` code. Treat it as implemented branch state, not as proof of production deployment or approval. It also uses an action name that does not match the handoff.
 
 ## Source Notes
 
@@ -106,7 +106,7 @@ This is not enough to query `GetModerationResult` unless some external operator 
 Upstream request ID status:
 
 - Search found no explicit capture of BP `ResponseMetadata.RequestId`, response headers, or Ark request IDs for Seedance video tasks.
-- `controller/moderation_diagnose.go:268` in the current working tree tries to infer request IDs from `tasks.data` keys such as `request_id`, `requestId`, and `RequestId`, but that only works if the upstream JSON body contains such a field.
+- `controller/moderation_diagnose.go:268` in commit `12f0857f` tries to infer request IDs from `tasks.data` keys such as `request_id`, `requestId`, and `RequestId`, but that only works if the upstream JSON body contains such a field.
 - Generic gateway logs have their own `request_id` field (`model/log.go:38`), but that is the new-api request ID, not BP `ResponseMetadata.RequestId`.
 
 ## 4. Admin Task Detail and Exposure
@@ -146,7 +146,7 @@ There is no local model/table for material assets in this repo, and the Asset Li
 - Failed asset registration/moderation records are not durable in new-api.
 - For material asset moderation failures, local new-api can only diagnose by `asset_id` or `request_id` if the operator supplies that value manually.
 
-The current working-tree diagnose resolver reflects this limitation:
+The diagnose resolver introduced by commit `12f0857f` reflects this limitation:
 
 - `controller/moderation_diagnose.go:288` treats `library_asset` as manually supplied IDs.
 - `controller/moderation_diagnose.go:293` requires `channel_id`.
@@ -168,17 +168,17 @@ Current caveats:
 
 - The helper is unexported in `controller`. It can be reused by controller code, but a productized implementation should extract it to a small internal package or dedicated helper to avoid coupling Asset Library and moderation diagnose controllers.
 - `relay/channel/jimeng/sign.go:147` hard-codes region `cn-north-1` and service `cv`, so it is only a pattern, not the correct helper for Ark `GetModerationResult`.
-- The current uncommitted `controller/moderation_diagnose.go` already calls `buildSeedanceAssetTargetURL()` and `signSeedanceAssetAdminRequest()` (`controller/moderation_diagnose.go:364` and `controller/moderation_diagnose.go:380`).
+- Commit `12f0857f` already calls `buildSeedanceAssetTargetURL()` and `signSeedanceAssetAdminRequest()` (`controller/moderation_diagnose.go:364` and `controller/moderation_diagnose.go:380`).
 
 Action-name gap:
 
 - The handoff states BP action `GetModerationResult`.
-- Current working-tree code uses `seedanceModerationDiagnoseActionName = "GetAIGCModerationResult"` (`controller/moderation_diagnose.go:29`).
+- Commit `12f0857f` uses `seedanceModerationDiagnoseActionName = "GetAIGCModerationResult"` (`controller/moderation_diagnose.go:29`).
 - This must be verified against the missing knowledge card or official BP docs before any implementation is productized.
 
-## 7. Existing Diagnose Worktree State
+## 7. Existing Diagnose Commit State
 
-The current working tree already includes uncommitted/modified diagnose surface area:
+Commit `12f0857f` includes diagnose surface area:
 
 - Backend controller: `controller/moderation_diagnose.go`
 - Backend tests: `controller/moderation_diagnose_test.go`
@@ -195,13 +195,41 @@ Observed behavior from code inspection:
 - Manual mode allows supplied `Id` plus `Type`.
 - Raw request/response are returned transiently and audit metadata is logged.
 
-This is not a recommendation to ship it as-is. It is pre-existing current repo state and still conflicts with the exploration-only boundary until Henry approves a product spec.
+This is not a recommendation to ship it as-is. It is branch code and still requires the normal local tests, MySQL preflight validation, and explicit production approval.
 
-## 8. Productization Gaps
+## 8. Database Compatibility Review Addendum
+
+Review date: 2026-06-18
+
+Current deployment baseline:
+
+- LSF production and preflight use MySQL.
+- Generic new-api code remains compatible with MySQL, PostgreSQL, and SQLite.
+- No production, preflight, Docker, or external database was accessed during this review.
+
+Commit `12f0857f` database findings:
+
+- Moderation Diagnose adds no table, field, migration, or schema dependency.
+- It uses existing GORM task/channel queries and the existing `RecordLogWithAdminInfo` audit log path.
+- It adds no raw SQL and no SQLite-, MySQL-, or PostgreSQL-specific query syntax.
+- Sidebar configuration remains JSON text inside the existing `users.setting` TEXT column.
+- Audit metadata remains JSON text inside the existing log `other` field.
+- Raw moderation request/response bodies, channel credentials, and ProjectName are not written to the audit log.
+- Existing tests used in-memory SQLite and did not provide a real MySQL integration test.
+
+One correctness issue was found: `video_task` requests could override the task row's persisted `channel_id`, allowing a task identifier to be queried through a different channel configuration. Local follow-up commit `12ddf656` makes the stored task channel authoritative and adds focused tests for channel mismatch rejection and audit-log sensitive-field exclusion.
+
+Database conclusion:
+
+- No new schema or migration is required.
+- The feature's GORM/log persistence paths are compatible with the current MySQL baseline based on code inspection and local tests.
+- Real MySQL execution remains a preflight verification requirement because this repository has no existing MySQL integration-test harness for this feature.
+
+## 9. Productization Gaps
 
 Before building or shipping an internal diagnose feature:
 
-- Verify the exact BP action name. Handoff says `GetModerationResult`; current working-tree code says `GetAIGCModerationResult`.
+- Verify the exact BP action name. Handoff says `GetModerationResult`; commit `12f0857f` says `GetAIGCModerationResult`.
 - Decide whether the tool is video-only for v1. Video task failures after upstream submit are already mostly diagnosable by stored `cgt-...`.
 - Decide whether manual `Id` + `Type` queries are allowed. They are powerful but bypass local record resolution.
 - Add explicit BP request ID capture if request-ID diagnosis is required. Current storage is opportunistic and body-only.

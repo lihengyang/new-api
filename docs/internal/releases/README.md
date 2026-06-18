@@ -2,6 +2,13 @@
 
 Internal release records are the repo source of truth for completed production rollouts.
 
+## Current LSF Source of Truth
+
+- Current completed production release: `2026-05-31-seedance-p1-client-request-rc2.md`
+- Current LSF production/preflight DB baseline: MySQL
+- SQLite references in older release or runbook material are historical/legacy/rollback/cold-backup context unless explicitly re-verified.
+- Current baseline and environment summaries live under `docs/internal/context-pack/`.
+
 ## Naming
 
 Use this format:

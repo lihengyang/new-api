@@ -14,7 +14,23 @@ Do not modify production without explicit approval.
 
 Default workflow: local branch -> local tests -> preflight -> production only after explicit approval.
 
+Current Light Speed Future production and preflight deployment baseline is MySQL. SQLite remains supported by the generic new-api codebase, but LSF SQLite paths and references are legacy/historical/rollback/cold-backup context unless Henry explicitly re-verifies otherwise.
+
 After a successful Light Speed Future / Seedance release, run Patch R as a docs-only follow-up. Read the context pack and latest release record first, update repo documentation from verified facts rather than chat memory, never expose secrets or internal routing details, and do not modify production from a documentation task.
+
+## LSF Knowledge-first Workflow
+
+Before Light Speed Future / Seedance / new-api work:
+
+1. Read `AGENTS.md`.
+2. Read all files under `docs/internal/context-pack/`.
+3. Read `docs/internal/releases/README.md`, the current release record, and the applicable runbook.
+4. Read relevant findings under `docs/internal/findings/`.
+5. Inspect current code and authorized read-only environment evidence instead of relying on temporary chat memory.
+
+If code, environment evidence, or Henry's latest explicit confirmation conflicts with the knowledge base, report the conflict before proceeding. State the old information, the latest fact, the supporting evidence, and the files that should be updated.
+
+Current code/environment evidence and Henry's latest explicit confirmation take precedence over superseded historical documents. Preserve historical records, but label stale operational guidance as historical, legacy, or superseded so it cannot be mistaken for the current baseline.
 
 ## Overview
 

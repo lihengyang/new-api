@@ -4,6 +4,10 @@ Wrong: production is still SQLite.
 
 Correct: current P1 production/preflight are MySQL; SQLite is legacy/cold-backup/rollback reference only unless re-verified.
 
+Wrong: `/etc/newapi/one-api.db` or `/data/one-api.db` is the current live LSF production database.
+
+Correct: current LSF production/preflight database baseline is MySQL. Those SQLite paths are legacy/historical/rollback/cold-backup references only.
+
 Wrong: SQLite preflight is enough for MySQL production.
 
 Correct: MySQL production requires MySQL preflight validation.
@@ -35,6 +39,10 @@ Correct: ProjectName is server-side only and must not be customer-controlled.
 Wrong: production, preflight, image, or DB facts can be answered from memory.
 
 Correct: verify with read-only commands and current docs.
+
+Wrong: old knowledge-base text should override current code/environment evidence or Henry's latest explicit confirmation.
+
+Correct: report the conflict, identify the old statement and latest fact, cite the evidence, and update the relevant knowledge files. Preserve historical records with explicit superseded/legacy labels.
 
 Wrong: post-release documentation can be reconstructed from old chat memory.
 

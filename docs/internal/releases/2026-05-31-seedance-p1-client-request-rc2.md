@@ -7,6 +7,15 @@ Latest docs/context commit: `927d1fba`
 Production container: `new-api-nightly`
 Preflight container: `new-api-preflight`
 
+## Current Database Baseline Note
+
+This completed release remains the current production release source of truth as of 2026-06-18.
+
+- Production DB: MySQL `lsf_newapi_prod`
+- Preflight DB: MySQL `lsf_newapi_preflight`
+- Production and preflight DB targets are separate.
+- SQLite paths or checks in older material are historical/legacy/rollback/cold-backup context and are not the current live LSF production baseline.
+
 ## Scope
 
 This release adds P1 support for:

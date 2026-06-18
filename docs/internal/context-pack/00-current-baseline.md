@@ -25,6 +25,15 @@ Cancel, delete, and list video tasks are not part of the current default scope u
 
 Customer docs must not expose internal routing, ProjectName, AK/SK, channel names, group names, upstream model names, `token_id`, DB schema, or billing internals.
 
+## Current Database Baseline — Confirmed 2026-06-18
+
+- LSF production DB baseline: MySQL.
+- LSF preflight DB baseline: MySQL.
+- Production and preflight use separate MySQL databases.
+- Generic new-api code must remain compatible with MySQL, PostgreSQL, and SQLite.
+- SQLite references in LSF documents are legacy, historical release, rollback, or cold-backup context only unless Henry explicitly confirms a new baseline.
+- `/etc/newapi/one-api.db` and `/data/one-api.db` are not the current live LSF production DB.
+
 ## Current Production Release Baseline — 2026-05-31
 
 Production rollout succeeded for:

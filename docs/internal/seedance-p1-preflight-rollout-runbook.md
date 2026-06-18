@@ -2,6 +2,8 @@
 
 Internal use only. Do not expose this document to customers.
 
+> Status: historical rollout runbook. The P1 rollout completed on 2026-05-31. Use the current context pack and `docs/internal/releases/2026-05-31-seedance-p1-client-request-rc2.md` for current operational facts. Pre-deployment image/schema statements below are preserved as historical evidence, not current state.
+
 This runbook applies to branch `feature/seedance-p1-billing-client-request-v1` and covers safe validation of:
 
 - `GET /v1/billing/balance`
@@ -9,14 +11,14 @@ This runbook applies to branch `feature/seedance-p1-billing-client-request-v1` a
 
 No production rollout may proceed without explicit approval.
 
-## Preflight Environment
+## Historical Preflight Environment Snapshot
 
-Verified baseline before P1 preflight deployment:
+Verified historical baseline before P1 preflight deployment:
 
 - Production container: `new-api-nightly`
-- Production image currently: `new-api:seedance-usage-response-rc1`
+- Production image at this historical snapshot: `new-api:seedance-usage-response-rc1`
 - Preflight container: `new-api-preflight`
-- Preflight image currently: `new-api:seedance-usage-response-rc1`
+- Preflight image at this historical snapshot: `new-api:seedance-usage-response-rc1`
 - Preflight port: `3002`
 - Preflight data directory: `/etc/newapi-preflight`
 - Production DB: MySQL 8.0.43-34, database `lsf_newapi_prod`
@@ -37,6 +39,8 @@ Back up the MySQL preflight DB before starting validation. Use the approved inte
 If testing against copied production data, confirm it is a copy and not the live production DB.
 
 Never overwrite `/etc/newapi/one-api.db`. That path is legacy SQLite/cold-backup/rollback reference only and is not the active production DB for this rollout.
+
+`/data/one-api.db` is also a generic/legacy SQLite path and is not the current live LSF production DB.
 
 ## Schema Verification
 
