@@ -14,6 +14,87 @@ Scope: exploration and local implementation review only. No production, prefligh
 - Existing no-SDK Ark signing for Asset Library can be reused for BP moderation queries, but it is currently controller-private and should be extracted or wrapped before a productized tool.
 - Commit `12f0857f` contains the backend/frontend `moderation_diagnose` code. Treat it as implemented branch state, not as proof of production deployment or approval. Its action-name and request-body mismatch was corrected in the 2026-06-19 follow-up described below.
 - Commit `9d49047c` contains the rc4 credential-resolution correction. It separates target resolution from credential resolution and no longer parses the task's video channel Bearer key as Asset Admin AK/SK.
+- Commit `302f60be` contains the rc5 final preflight correction for manual task ownership, result semantics, library-asset UX, stale-result prevention, and focused rate-limit behavior.
+
+## 2026-06-19 RC4 Preflight Evidence and RC5 Final Correction
+
+Henry confirmed the following rc4 preflight facts for this rc5 task. This is the latest explicit environment evidence and supersedes the older local-only statement that rc4 still required initial MySQL preflight validation:
+
+- Preflight MySQL startup and migrations succeeded.
+- Unauthenticated Moderation Diagnose requests returned HTTP 401.
+- Exact lookup succeeded for numeric task record ID, LSF `task_...`, and persisted BP `cgt-...`.
+- Automatic credential mapping succeeded through Group, Asset Admin ability, ProjectName, and strict AK/SK parsing.
+- GetModerationResult signing used the correct Action, Version, service, and fixed internal region.
+- A positive moderation result returned real block reasons including Copyright/Safety categories.
+- `NotFound.Id` was returned and displayed as a completed upstream query.
+- Moderation Diagnose QPM 10 was exercised successfully; the eleventh request returned HTTP 429.
+- `library_asset` without ownership mapping did not call BytePlus.
+
+This rc5 task did not connect to a server, deploy preflight, query an external database, or modify production. The preflight facts above come from Henry's latest explicit confirmation, not from new server access during rc5 implementation.
+
+### RC4 issue found after successful preflight
+
+Rc4's backend already attempted automatic ownership resolution for persisted `task_...` and `cgt-...` values in manual mode. However, the rc4 frontend required a credential channel before sending every manual request. As a result, `manual + Type=task_id` could not reach the backend auto-resolution path without an unnecessary manual selection.
+
+Rc4 also left several UX ambiguities:
+
+- a `404 NotFound.Id` attempt retained `success=true` for compatibility but had no separate diagnostic outcome, which could be misread as a found result;
+- changing source, ID, Type, or credential channel could leave a previous result visible;
+- frontend validation and request failure could leave stale success state;
+- `library_asset` invited a query even though automatic asset ownership is not persisted;
+- attempted queries, raw response, and raw request/error fields were shown together without a clear primary-versus-advanced hierarchy.
+
+### RC5 final behavior
+
+Manual `task_id`:
+
+- the credential selector is optional in the frontend;
+- the backend first checks exact numeric task record ID, exact `task_...`, and exact persisted `cgt-...`;
+- a matched task reuses the video-task target and automatic tenant credential resolvers;
+- any supplied manual Asset Admin channel is ignored for a matched task;
+- an unmatched task ID requires `asset_admin_channel_id` and returns a specific ownership-not-found message when it is absent;
+- external task IDs with a selected channel still receive strict backend Asset Admin ability, enabled-status, and AK/SK validation.
+
+Manual `asset_id` and `request_id`:
+
+- require an Asset Admin credential channel;
+- continue to validate the selected channel on the backend;
+- reject ordinary video Bearer channels.
+
+`library_asset`:
+
+- remains protected by the backend ownership-mapping error;
+- creates no attempted query and performs no BytePlus call;
+- does not consume Moderation Diagnose QPM;
+- the UI explains the storage limitation and provides a `Continue in manual mode` transition that preserves the asset ID, selects `asset_id`, clears prior results, and does not automatically query upstream.
+
+Result semantics:
+
+- `found`: the BytePlus request returned a moderation result;
+- `not_found`: BytePlus returned HTTP 404 / `NotFound.Id`;
+- `request_failed`: signing, proxy, network, configuration, or other upstream execution failed;
+- `validation_error`: local parameters, ownership, or credential validation failed;
+- `rate_limited`: the Moderation Diagnose QPM limit rejected the request.
+
+The attempt-level `success` field remains compatible with rc4, including `success=true` for a completed HTTP 404 attempt. The new response-level `result_status=not_found` prevents the UI from presenting that outcome as a found result.
+
+The UI now:
+
+- clears stale results on every relevant input change, query start, validation failure, request failure, reset, and library-to-manual transition;
+- shows an empty state until the current input produces a diagnostic result;
+- displays result status, resolved query, resolved details, and final redacted BytePlus response first;
+- keeps attempted queries, raw request body, and raw error in a collapsed Advanced diagnostics section;
+- preserves every fallback attempt in `attempted_queries`;
+- never displays AK/SK, ProjectName, Group, channel key, or channel settings.
+
+Rate limiting remains scoped to Moderation Diagnose:
+
+- QPM remains 10;
+- the eleventh request returns HTTP 429 with `result_status=rate_limited`;
+- rate-limited requests do not enter the diagnose handler or call BytePlus;
+- unrelated admin and customer APIs are unaffected.
+
+No asset table, field, index, or migration was added. No customer-facing documentation change is required.
 
 ## 2026-06-19 RC4 Corrective Audit
 
@@ -123,7 +204,8 @@ No migration or temporary asset table was added.
 - rc1: used the wrong action/body contract (`GetAIGCModerationResult` and ProjectName in the body). Discarded.
 - rc2: corrected the action/body but still depended on channel Region configuration. Failed candidate; not production-approved.
 - rc3: used the task's persisted video `channel_id` as the moderation credential channel. Preflight returned `asset admin channel key must use AK|SK format` because the video Bearer key was sent to the Asset Admin parser. Rc3 must not enter production.
-- rc4: resolves task ownership first, then selects a separate Asset Admin ability channel within the verified tenant boundary. Local candidate only until MySQL preflight succeeds and production approval is explicit.
+- rc4: resolved task ownership first, then selected a separate Asset Admin ability channel within the verified tenant boundary. MySQL preflight and real result/NotFound/QPM checks succeeded, but the manual frontend validation and result-UX issues above make rc4 superseded by rc5. Rc4 must not enter production.
+- rc5: preserves the verified rc4 backend mapping and signing behavior while correcting manual task flow, result status semantics, library-asset UX, stale-result handling, and rate-limit response semantics. Rc5 remains a local candidate until its own authorized preflight and explicit production approval.
 
 Production was not changed by this corrective work.
 
@@ -304,7 +386,7 @@ Moderation Region handling:
 - Region is not included in the request body, response DTO, audit log, or frontend form.
 - Asset Library keeps its existing channel-configured Region behavior; this correction is scoped only to Moderation Diagnose.
 
-## 7. Historical Diagnose Commit State — Superseded by RC4
+## 7. Historical Diagnose Commit State — Superseded by RC4 and RC5
 
 Commit `12f0857f` includes diagnose surface area:
 
@@ -362,7 +444,7 @@ RC4 compatibility addendum, 2026-06-19:
 - The loaded JSON structure is parsed and compared again before the task is accepted.
 - The query is limited to two rows so duplicates are detected without an unbounded application-level scan.
 - Rc4 still adds no table, field, index, or migration.
-- Local SQLite tests and compilation passed. Real MySQL preflight execution remains mandatory before release approval.
+- Local SQLite tests and compilation passed. This statement was written before Henry confirmed the successful rc4 MySQL preflight described above; rc5 still requires its own authorized preflight before release approval.
 
 ## 9. Remaining Productization Gaps
 
@@ -373,7 +455,7 @@ Before building or shipping an internal diagnose feature:
 - Consider storing a redacted raw upstream submit error for idempotency reservations. Current reservation failures only keep `fail_reason`.
 - Extract Ark signing helpers into a shared internal helper with focused tests for service `ark`, region `ap-southeast-1`, action URL construction, and `Version=2024-01-01`.
 - Keep `private_data` backend-only; do not expose upstream IDs in customer responses or ordinary task logs.
-- Validate rc4 in MySQL preflight before any production approval. Rc1, rc2, and rc3 are failed candidates and must not be deployed.
+- Validate rc5 in an authorized MySQL preflight before any production approval. Rc1, rc2, rc3, and rc4 are superseded or failed candidates and must not be deployed.
 - No customer-facing documentation change is required for this internal admin tool correction.
 
 ## Recommendation
