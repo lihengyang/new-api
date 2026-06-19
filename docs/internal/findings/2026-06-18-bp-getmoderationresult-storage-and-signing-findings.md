@@ -13,6 +13,119 @@ Scope: exploration and local implementation review only. No production, prefligh
 - Asset Library calls are currently pass-through relay calls. There is no local material asset table/model and no durable local store for `asset_id`, `request_id`, raw asset responses, or failed asset registration records.
 - Existing no-SDK Ark signing for Asset Library can be reused for BP moderation queries, but it is currently controller-private and should be extracted or wrapped before a productized tool.
 - Commit `12f0857f` contains the backend/frontend `moderation_diagnose` code. Treat it as implemented branch state, not as proof of production deployment or approval. Its action-name and request-body mismatch was corrected in the 2026-06-19 follow-up described below.
+- Commit `9d49047c` contains the rc4 credential-resolution correction. It separates target resolution from credential resolution and no longer parses the task's video channel Bearer key as Asset Admin AK/SK.
+
+## 2026-06-19 RC4 Corrective Audit
+
+This audit was local-only. No server, preflight environment, production environment, external database, customer data, or deployment state was accessed or modified.
+
+### Authentication boundaries confirmed from code
+
+- Seedance video submit and polling use the selected video channel key as a Bearer API key:
+  - `relay/channel/task/doubao/adaptor.go:110-114`
+  - `relay/channel/task/doubao/adaptor.go:140-145`
+  - `relay/channel/task/doubao/adaptor.go:281-296`
+- Asset Library Admin parses the selected channel key as exactly `<AK>|<SK>` and uses Ark HMAC signing:
+  - `controller/seedance_asset.go:148-158`
+  - `controller/seedance_asset.go:460-465`
+  - `controller/seedance_asset.go:494-513`
+- Customers still call Asset Library through the normal LSF Bearer-token relay boundary. `router/relay-router.go` applies `TokenAuth` and `Distribute` before the Asset Library routes, then `RelaySeedanceAsset` performs the server-side AK/SK upstream signing:
+  - `router/relay-router.go:72-85`
+  - `router/relay-router.go:124-144`
+  - `controller/seedance_asset.go:439-526`
+- AK/SK therefore exists only in the server-side upstream forwarding layer. It is not a customer request field.
+
+### Task persistence facts
+
+`model.Task` persists:
+
+- database record ID: `Task.ID`
+- LSF public task ID: `Task.TaskID`
+- owning user and token: `Task.UserId`, `Task.TokenId`
+- selected billing/routing group: `Task.Group`
+- original video channel: `Task.ChannelId`
+- origin and upstream model names: `Task.Properties.OriginModelName` and `Task.Properties.UpstreamModelName`
+- BP upstream generation ID: `Task.PrivateData.UpstreamTaskID`
+
+Code references:
+
+- `model/task.go:60-84`
+- `model/task.go:96-120`
+- `model/task.go:191-227`
+- `controller/relay.go:658-692`
+
+The BP `cgt-...` ID is stored in the JSON-serialized `private_data` structure under `upstream_task_id`, not in `task_id` and not in a dedicated SQL column. Rc4 adds exact database-specific JSON extraction for SQLite, MySQL, and PostgreSQL, limits the candidate result set, then parses the stored structure and compares the ID again:
+
+- `model/task.go:350-383`
+
+### Current Asset Library tenant and channel selection
+
+Asset Library internal model names are fixed code-level names, not tenant aliases:
+
+- virtual routes: `seedance-virtual-asset-admin`
+- real-human routes: `seedance-real-human-asset-admin`
+
+`middleware/distributor.go:272-275` assigns those internal models from the route. Normal channel selection then uses the authenticated request's effective Group plus the internal model through `CacheGetRandomSatisfiedChannel` (`middleware/distributor.go:130-136`). The persistent relation is `abilities(group, model, channel_id)` (`model/ability.go:16-23`).
+
+There is no direct video-channel-to-Asset-Admin-channel foreign key or relation field in `model.Channel` (`model/channel.go:21-54`). `UserId` and `TokenId` identify task ownership, but neither maps directly to a channel.
+
+The existing code/data combination that can prove the same tenant boundary is:
+
+1. the persisted `tasks.group`;
+2. an enabled Asset Admin ability with the same `abilities.group`;
+3. one of the two fixed Asset Admin internal models;
+4. an enabled channel with a strictly valid single `<AK>|<SK>` key;
+5. exact `ByteplusProjectName` equality when the original video channel has a configured project.
+
+This mirrors normal Asset Library distribution semantics instead of deriving a relationship from key shape or field names.
+
+### RC4 resolver behavior
+
+Rc4 separates:
+
+- moderation target resolution: `controller/moderation_diagnose.go:224-405`
+- moderation credential resolution: `controller/moderation_diagnose.go:406-550`
+
+Target resolution:
+
+- accepts exact task database ID, exact `task_...`, or exact persisted `cgt-...`;
+- does not fall back from numeric record lookup to a textual task ID;
+- does not accept a client override for `task.channel_id`;
+- loads the persisted video channel only for tenant/project validation;
+- enforces the 14-day lookup window;
+- does not return Group, ProjectName, channel key, channel configuration, or credential channel ID.
+
+Credential resolution:
+
+- queries enabled Asset Admin abilities for the persisted task Group;
+- excludes ordinary video-only channels even if their key contains `|`;
+- parses only eligible Asset Admin channel keys as strict single `<AK>|<SK>`;
+- applies exact ProjectName matching when the video channel has a configured project;
+- sorts deterministically by priority descending and channel ID ascending;
+- accepts multiple candidates only when both ProjectName and credentials are identical;
+- returns `credential mapping ambiguous` instead of guessing when candidates conflict;
+- stores only the final credential channel ID in the admin audit metadata.
+
+### Asset ownership storage
+
+The repository still has no durable Asset Library asset-registration model or table. `RelaySeedanceAsset` relays the redacted upstream response directly and does not persist `asset_id`, Asset Library `request_id`, channel, Group, tenant, or registration ownership (`controller/seedance_asset.go:467-526`).
+
+Therefore rc4 `library_asset` automatic mode returns:
+
+```text
+asset ownership mapping is not available; use manual mode
+```
+
+No migration or temporary asset table was added.
+
+### Failed candidate history
+
+- rc1: used the wrong action/body contract (`GetAIGCModerationResult` and ProjectName in the body). Discarded.
+- rc2: corrected the action/body but still depended on channel Region configuration. Failed candidate; not production-approved.
+- rc3: used the task's persisted video `channel_id` as the moderation credential channel. Preflight returned `asset admin channel key must use AK|SK format` because the video Bearer key was sent to the Asset Admin parser. Rc3 must not enter production.
+- rc4: resolves task ownership first, then selects a separate Asset Admin ability channel within the verified tenant boundary. Local candidate only until MySQL preflight succeeds and production approval is explicit.
+
+Production was not changed by this corrective work.
 
 ## Source Notes
 
@@ -191,7 +304,7 @@ Moderation Region handling:
 - Region is not included in the request body, response DTO, audit log, or frontend form.
 - Asset Library keeps its existing channel-configured Region behavior; this correction is scoped only to Moderation Diagnose.
 
-## 7. Existing Diagnose Commit State
+## 7. Historical Diagnose Commit State — Superseded by RC4
 
 Commit `12f0857f` includes diagnose surface area:
 
@@ -201,7 +314,7 @@ Commit `12f0857f` includes diagnose surface area:
 - Frontend page: `web/src/pages/ModerationDiagnose/index.jsx`
 - Sidebar/render wiring in `web/src/App.jsx`, `web/src/components/layout/SiderBar.jsx`, and related files.
 
-Observed behavior from code inspection:
+The following behavior describes the original `12f0857f` implementation and is retained only as historical evidence:
 
 - Video task mode resolves by local task row ID or public `task_...`.
 - It refuses to use public `task_...` as a BP generation ID unless the extracted ID has `cgt-` prefix.
@@ -210,7 +323,7 @@ Observed behavior from code inspection:
 - Manual mode allows supplied `Id` plus `Type`.
 - Raw request/response are returned transiently and audit metadata is logged.
 
-This is not a recommendation to ship it as-is. It is branch code and still requires the normal local tests, MySQL preflight validation, and explicit production approval.
+This behavior is superseded by commit `9d49047c`. In particular, rc4 removes automatic-mode `channel_id`, adds exact `cgt-...` lookup, and separates task ownership from Asset Admin credential selection.
 
 ## 8. Database Compatibility Review Addendum
 
@@ -243,29 +356,34 @@ Database conclusion:
 - The feature's GORM/log persistence paths are compatible with the current MySQL baseline based on code inspection and local tests.
 - Real MySQL execution remains a preflight verification requirement because this repository has no existing MySQL integration-test harness for this feature.
 
-## 9. Productization Gaps
+RC4 compatibility addendum, 2026-06-19:
+
+- Rc4 adds exact JSON extraction for `private_data.upstream_task_id` with explicit SQLite, MySQL, and PostgreSQL query branches.
+- The loaded JSON structure is parsed and compared again before the task is accepted.
+- The query is limited to two rows so duplicates are detected without an unbounded application-level scan.
+- Rc4 still adds no table, field, index, or migration.
+- Local SQLite tests and compilation passed. Real MySQL preflight execution remains mandatory before release approval.
+
+## 9. Remaining Productization Gaps
 
 Before building or shipping an internal diagnose feature:
 
-- Decide whether the tool is video-only for v1. Video task failures after upstream submit are already mostly diagnosable by stored `cgt-...`.
-- Decide whether manual `Id` + `Type` queries are allowed. They are powerful but bypass local record resolution.
 - Add explicit BP request ID capture if request-ID diagnosis is required. Current storage is opportunistic and body-only.
 - Add an Asset Library persistence model if asset failure diagnosis must work without manually supplied `asset_id` or `request_id`.
 - Consider storing a redacted raw upstream submit error for idempotency reservations. Current reservation failures only keep `fail_reason`.
 - Extract Ark signing helpers into a shared internal helper with focused tests for service `ark`, region `ap-southeast-1`, action URL construction, and `Version=2024-01-01`.
 - Keep `private_data` backend-only; do not expose upstream IDs in customer responses or ordinary task logs.
-- Validate the corrected official contract in MySQL preflight before any production approval. The discarded `new-api:seedance-moderation-mini-rc1` candidate must not be deployed.
-- The `new-api:seedance-moderation-mini-rc2` candidate still depended on a channel Region value and is retained only as a failed preflight candidate; it must not be deployed.
+- Validate rc4 in MySQL preflight before any production approval. Rc1, rc2, and rc3 are failed candidates and must not be deployed.
 - No customer-facing documentation change is required for this internal admin tool correction.
 
 ## Recommendation
 
-For the first productized tool, start with video task failure diagnosis only:
+For automatic diagnosis:
 
-1. Resolve local task row by DB ID or public `task_...`.
+1. Resolve a local task row by exact DB ID, public `task_...`, or persisted `cgt-...`.
 2. Read `tasks.private_data.upstream_task_id`.
-3. Require the upstream ID to match expected BP generation ID shape before querying.
+3. Resolve a separate Asset Admin AK/SK channel through the task Group, Asset Admin ability, and ProjectName consistency.
 4. Call BP using the existing Ark signing logic with the verified action name.
-5. Show/store only redacted moderation output according to an explicit internal policy.
+5. Show only redacted moderation output and persist only non-sensitive audit metadata.
 
 Asset Library diagnosis should remain manual until new-api persists asset records or a separate verified source of `asset_id` / `request_id` exists.
