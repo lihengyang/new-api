@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -171,18 +172,40 @@ func TestFindModerationDiagnoseTaskReturnsNumericLookupDatabaseError(t *testing.
 	require.Equal(t, 1, queryCount)
 }
 
+func TestResolveSeedanceModerationConfigUsesInternalRegionWhenChannelRegionEmpty(t *testing.T) {
+	channel := &model.Channel{}
+	channel.SetSetting(dto.ChannelSettings{
+		ByteplusProjectName: "project-for-response-redaction",
+		ByteplusRegion:      "",
+		Proxy:               "http://proxy.example.com",
+	})
+	channel.SetOtherSettings(dto.ChannelOtherSettings{
+		ByteplusRegion: "",
+	})
+
+	config, err := resolveSeedanceModerationConfigFromChannel(channel)
+
+	require.NoError(t, err)
+	require.Equal(t, seedanceModerationDiagnoseRegion, config.Region)
+	require.Equal(t, "http://proxy.example.com", config.Proxy)
+	require.Equal(t, "project-for-response-redaction", config.ProjectName)
+
+	baseURL, err := seedanceAssetAdminBaseURL("", config.Region)
+	require.NoError(t, err)
+	require.Equal(t, "https://ark.ap-southeast-1.byteplusapi.com", baseURL)
+}
+
 func TestBuildModerationDiagnoseRequestUsesOfficialContractAndArkRegion(t *testing.T) {
 	const (
 		accessKey      = "test-ak-should-not-enter-body"
 		secretKey      = "test-sk-should-not-enter-body"
 		projectName    = "test-project-should-not-enter-body"
 		assetGroupType = "test-group-should-not-enter-body"
-		region         = "ap-southeast-1"
 	)
 	config := &seedanceAssetAdminConfig{
 		ProjectName:    projectName,
 		AssetGroupType: assetGroupType,
-		Region:         region,
+		Region:         seedanceModerationDiagnoseRegion,
 		Proxy:          "test-proxy-should-not-enter-body",
 	}
 	query := moderationDiagnoseQuery{
@@ -216,12 +239,12 @@ func TestBuildModerationDiagnoseRequestUsesOfficialContractAndArkRegion(t *testi
 	require.NotContains(t, bodyText, accessKey)
 	require.NotContains(t, bodyText, secretKey)
 	require.NotContains(t, bodyText, assetGroupType)
-	require.NotContains(t, bodyText, region)
+	require.NotContains(t, bodyText, seedanceModerationDiagnoseRegion)
 	require.NotContains(t, bodyText, config.Proxy)
 
 	authorization := httpReq.Header.Get("Authorization")
 	require.Contains(t, authorization, "Credential="+accessKey+"/")
-	require.Contains(t, authorization, "/"+region+"/ark/request")
+	require.Contains(t, authorization, "/"+seedanceModerationDiagnoseRegion+"/ark/request")
 	require.NotContains(t, authorization, secretKey)
 }
 
@@ -248,8 +271,8 @@ func TestRecordModerationDiagnoseAuditDoesNotPersistRawOrCredentials(t *testing.
 			ID:   "cgt-upstream-generation",
 			Type: moderationDiagnoseTypeTaskID,
 		},
-		RawRequestBody: `{"ProjectName":"project-placeholder","credential":"credential-placeholder"}`,
-		RawResponse:    `{"moderation":"raw-response-placeholder"}`,
+		RawRequestBody: `{"ProjectName":"project-placeholder","credential":"credential-placeholder","Region":"ap-southeast-1"}`,
+		RawResponse:    `{"moderation":"raw-response-placeholder","Region":"ap-southeast-1"}`,
 	}
 	recordModerationDiagnoseAudit(c, moderationDiagnoseRequest{
 		SourceType: moderationDiagnoseSourceVideoTask,
@@ -262,6 +285,7 @@ func TestRecordModerationDiagnoseAuditDoesNotPersistRawOrCredentials(t *testing.
 	require.NotContains(t, auditLog.Other, "project-placeholder")
 	require.NotContains(t, auditLog.Other, "credential-placeholder")
 	require.NotContains(t, auditLog.Other, "raw-response-placeholder")
+	require.NotContains(t, auditLog.Other, seedanceModerationDiagnoseRegion)
 	require.True(t, strings.Contains(auditLog.Other, "cgt-upstream-generation"))
 }
 

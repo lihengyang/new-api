@@ -28,6 +28,7 @@ const (
 	moderationDiagnoseTypeRequestID = "request_id"
 
 	seedanceModerationDiagnoseActionName = "GetModerationResult"
+	seedanceModerationDiagnoseRegion     = "ap-southeast-1"
 )
 
 type moderationDiagnoseRequest struct {
@@ -159,16 +160,6 @@ func runModerationDiagnose(c *gin.Context, req moderationDiagnoseRequest) (*mode
 			Resolved:      resolved,
 		}, err
 	}
-	if strings.TrimSpace(config.Region) == "" {
-		return &moderationDiagnoseResponse{
-			SourceType:    req.SourceType,
-			RecordID:      recordID,
-			ResolvedQuery: queries[0],
-			ChannelID:     channelID,
-			Resolved:      resolved,
-		}, errors.New("byteplus_region is required on the selected channel")
-	}
-
 	apiKey, err := firstSeedanceChannelKey(channel)
 	if err != nil {
 		return &moderationDiagnoseResponse{
@@ -421,19 +412,12 @@ func resolveSeedanceModerationConfigFromChannel(channel *model.Channel) (*seedan
 
 	channelSetting := channel.GetSetting()
 	config.ProjectName = strings.TrimSpace(channelSetting.ByteplusProjectName)
-	config.AssetGroupType = strings.TrimSpace(channelSetting.ByteplusAssetGroupType)
-	config.Region = strings.TrimSpace(channelSetting.ByteplusRegion)
+	config.Region = seedanceModerationDiagnoseRegion
 	config.Proxy = strings.TrimSpace(channelSetting.Proxy)
 
 	channelOtherSettings := channel.GetOtherSettings()
 	if config.ProjectName == "" {
 		config.ProjectName = strings.TrimSpace(channelOtherSettings.ByteplusProjectName)
-	}
-	if config.AssetGroupType == "" {
-		config.AssetGroupType = strings.TrimSpace(channelOtherSettings.ByteplusAssetGroupType)
-	}
-	if config.Region == "" {
-		config.Region = strings.TrimSpace(channelOtherSettings.ByteplusRegion)
 	}
 	return config, nil
 }

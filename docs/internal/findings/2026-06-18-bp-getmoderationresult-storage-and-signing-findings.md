@@ -179,7 +179,17 @@ Official API contract correction:
 - Valid `Type` values are `task_id`, `asset_id`, and `request_id`.
 - `ProjectName` is not a request parameter for this interface.
 - The 2026-06-19 follow-up changes the implementation from `GetAIGCModerationResult` to `GetModerationResult`, removes `ProjectName` from the request body, and adds contract and Ark signing tests.
-- Channel selection remains server-side: the selected task/channel supplies AK/SK, Region, and proxy configuration. For `video_task`, the persisted task `channel_id` remains authoritative and cannot be overridden by the request.
+- Channel selection remains server-side: the selected task/channel supplies AK/SK and proxy configuration. For `video_task`, the persisted task `channel_id` remains authoritative and cannot be overridden by the request.
+
+Moderation Region handling:
+
+- `Region` is not a `GetModerationResult` JSON request parameter.
+- BP PDF V1.0.4 uses `ap-southeast-1` in the official signing example.
+- The current new-api admin surface does not provide a usable BytePlus Region configuration entry for Moderation Diagnose.
+- Moderation Diagnose therefore uses the internal constant `ap-southeast-1`; administrators do not need to configure it on the channel.
+- The constant is used only to construct the default Ark endpoint and the AK/SK credential-scope signature.
+- Region is not included in the request body, response DTO, audit log, or frontend form.
+- Asset Library keeps its existing channel-configured Region behavior; this correction is scoped only to Moderation Diagnose.
 
 ## 7. Existing Diagnose Commit State
 
@@ -245,6 +255,7 @@ Before building or shipping an internal diagnose feature:
 - Extract Ark signing helpers into a shared internal helper with focused tests for service `ark`, region `ap-southeast-1`, action URL construction, and `Version=2024-01-01`.
 - Keep `private_data` backend-only; do not expose upstream IDs in customer responses or ordinary task logs.
 - Validate the corrected official contract in MySQL preflight before any production approval. The discarded `new-api:seedance-moderation-mini-rc1` candidate must not be deployed.
+- The `new-api:seedance-moderation-mini-rc2` candidate still depended on a channel Region value and is retained only as a failed preflight candidate; it must not be deployed.
 - No customer-facing documentation change is required for this internal admin tool correction.
 
 ## Recommendation
