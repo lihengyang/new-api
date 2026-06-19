@@ -2,7 +2,7 @@
 
 Date: 2026-06-18
 
-Scope: exploration only. No production, preflight, Docker, DB, or runtime state was modified or queried. This review used the local repo plus the Desktop handoff brief. The external knowledge card named by the handoff, `LSF_AI_Knowledge_Card_BP_GetModerationResult_API_2026-06-17.md`, was not found under Desktop, Documents, or Dev, so the BP API facts below rely on the handoff text and local code inspection.
+Scope: exploration and local implementation review only. No production, preflight, external DB, or runtime state was modified or queried. The original review used the local repo plus the Desktop handoff brief. The API contract correction was subsequently verified from the BP official `GetModerationResult` PDF, V1.0.4, dated 2026-06-12, provided by Henry for the 2026-06-19 review.
 
 ## Executive Summary
 
@@ -12,7 +12,7 @@ Scope: exploration only. No production, preflight, Docker, DB, or runtime state 
 - Upstream request IDs are not explicitly captured from headers or response metadata. They may only survive opportunistically if the upstream JSON body itself contains a request ID and is stored in `tasks.data`.
 - Asset Library calls are currently pass-through relay calls. There is no local material asset table/model and no durable local store for `asset_id`, `request_id`, raw asset responses, or failed asset registration records.
 - Existing no-SDK Ark signing for Asset Library can be reused for BP moderation queries, but it is currently controller-private and should be extracted or wrapped before a productized tool.
-- Commit `12f0857f` contains the backend/frontend `moderation_diagnose` code. Treat it as implemented branch state, not as proof of production deployment or approval. It also uses an action name that does not match the handoff.
+- Commit `12f0857f` contains the backend/frontend `moderation_diagnose` code. Treat it as implemented branch state, not as proof of production deployment or approval. Its action-name and request-body mismatch was corrected in the 2026-06-19 follow-up described below.
 
 ## Source Notes
 
@@ -29,6 +29,7 @@ Required context was read from:
 - `docs/internal/releases/2026-05-31-seedance-p1-client-request-rc2.md`
 - `docs/customer/Light_Speed_Future_API_Integration_Guide_v2.1.2.docx`
 - `/Users/henry-macmini/Desktop/Codex_Handoff_BP_GetModerationResult_Exploration_2026-06-18.md`
+- BP official `GetModerationResult` API PDF, V1.0.4, 2026-06-12, provided by Henry for the 2026-06-19 review
 
 ## 1. Platform Task ID Generation and Storage
 
@@ -170,11 +171,15 @@ Current caveats:
 - `relay/channel/jimeng/sign.go:147` hard-codes region `cn-north-1` and service `cv`, so it is only a pattern, not the correct helper for Ark `GetModerationResult`.
 - Commit `12f0857f` already calls `buildSeedanceAssetTargetURL()` and `signSeedanceAssetAdminRequest()` (`controller/moderation_diagnose.go:364` and `controller/moderation_diagnose.go:380`).
 
-Action-name gap:
+Official API contract correction:
 
-- The handoff states BP action `GetModerationResult`.
-- Commit `12f0857f` uses `seedanceModerationDiagnoseActionName = "GetAIGCModerationResult"` (`controller/moderation_diagnose.go:29`).
-- This must be verified against the missing knowledge card or official BP docs before any implementation is productized.
+- BP PDF V1.0.4 dated 2026-06-12 defines the action as `GetModerationResult`.
+- The action URL uses `Version=2024-01-01`.
+- The JSON request body contains only `Id` and `Type`.
+- Valid `Type` values are `task_id`, `asset_id`, and `request_id`.
+- `ProjectName` is not a request parameter for this interface.
+- The 2026-06-19 follow-up changes the implementation from `GetAIGCModerationResult` to `GetModerationResult`, removes `ProjectName` from the request body, and adds contract and Ark signing tests.
+- Channel selection remains server-side: the selected task/channel supplies AK/SK, Region, and proxy configuration. For `video_task`, the persisted task `channel_id` remains authoritative and cannot be overridden by the request.
 
 ## 7. Existing Diagnose Commit State
 
@@ -232,7 +237,6 @@ Database conclusion:
 
 Before building or shipping an internal diagnose feature:
 
-- Verify the exact BP action name. Handoff says `GetModerationResult`; commit `12f0857f` says `GetAIGCModerationResult`.
 - Decide whether the tool is video-only for v1. Video task failures after upstream submit are already mostly diagnosable by stored `cgt-...`.
 - Decide whether manual `Id` + `Type` queries are allowed. They are powerful but bypass local record resolution.
 - Add explicit BP request ID capture if request-ID diagnosis is required. Current storage is opportunistic and body-only.
@@ -240,6 +244,8 @@ Before building or shipping an internal diagnose feature:
 - Consider storing a redacted raw upstream submit error for idempotency reservations. Current reservation failures only keep `fail_reason`.
 - Extract Ark signing helpers into a shared internal helper with focused tests for service `ark`, region `ap-southeast-1`, action URL construction, and `Version=2024-01-01`.
 - Keep `private_data` backend-only; do not expose upstream IDs in customer responses or ordinary task logs.
+- Validate the corrected official contract in MySQL preflight before any production approval. The discarded `new-api:seedance-moderation-mini-rc1` candidate must not be deployed.
+- No customer-facing documentation change is required for this internal admin tool correction.
 
 ## Recommendation
 

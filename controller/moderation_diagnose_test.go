@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"bytes"
 	"errors"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -102,6 +104,29 @@ func TestResolveModerationDiagnoseVideoTaskDoesNotUsePublicTaskIDAsUpstreamGener
 	require.Empty(t, queries)
 }
 
+func TestResolveModerationDiagnoseVideoTaskUsesStoredUpstreamTaskID(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	task := createModerationDiagnoseTask(t, "task_public_with_private_data", 45, map[string]any{
+		"id": "task_public_with_private_data",
+	})
+	require.NoError(t, model.DB.Model(&task).Update("private_data", model.TaskPrivateData{
+		UpstreamTaskID: "cgt-database-upstream",
+	}).Error)
+
+	channelID, _, resolved, queries, err := resolveModerationDiagnoseVideoTask(moderationDiagnoseRequest{
+		RecordID: task.TaskID,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, task.ChannelId, channelID)
+	require.Equal(t, "cgt-database-upstream", resolved["upstream_generation_id"])
+	require.Len(t, queries, 1)
+	require.Equal(t, moderationDiagnoseQuery{
+		ID:   "cgt-database-upstream",
+		Type: moderationDiagnoseTypeTaskID,
+	}, queries[0])
+}
+
 func TestResolveModerationDiagnoseVideoTaskRejectsMismatchedChannel(t *testing.T) {
 	setupModerationDiagnoseTestDB(t)
 	task := createModerationDiagnoseTask(t, "task_channel_bound", 45, map[string]any{
@@ -144,6 +169,60 @@ func TestFindModerationDiagnoseTaskReturnsNumericLookupDatabaseError(t *testing.
 	require.Nil(t, task)
 	require.ErrorIs(t, err, expectedErr)
 	require.Equal(t, 1, queryCount)
+}
+
+func TestBuildModerationDiagnoseRequestUsesOfficialContractAndArkRegion(t *testing.T) {
+	const (
+		accessKey      = "test-ak-should-not-enter-body"
+		secretKey      = "test-sk-should-not-enter-body"
+		projectName    = "test-project-should-not-enter-body"
+		assetGroupType = "test-group-should-not-enter-body"
+		region         = "ap-southeast-1"
+	)
+	config := &seedanceAssetAdminConfig{
+		ProjectName:    projectName,
+		AssetGroupType: assetGroupType,
+		Region:         region,
+		Proxy:          "test-proxy-should-not-enter-body",
+	}
+	query := moderationDiagnoseQuery{
+		ID:   "cgt-database-upstream",
+		Type: moderationDiagnoseTypeTaskID,
+	}
+	requestBody, err := buildModerationDiagnoseRequestBody(query)
+	require.NoError(t, err)
+	targetURL, err := buildModerationDiagnoseTargetURL("https://ark.example.com")
+	require.NoError(t, err)
+	httpReq, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(requestBody))
+	require.NoError(t, err)
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
+	require.NoError(t, signSeedanceAssetAdminRequest(httpReq, accessKey, secretKey, config.Region))
+
+	require.Equal(t, "GetModerationResult", httpReq.URL.Query().Get("Action"))
+	require.Equal(t, "2024-01-01", httpReq.URL.Query().Get("Version"))
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(requestBody, &payload))
+	require.Equal(t, map[string]any{
+		"Id":   "cgt-database-upstream",
+		"Type": moderationDiagnoseTypeTaskID,
+	}, payload)
+	require.Len(t, payload, 2)
+
+	bodyText := string(requestBody)
+	require.NotContains(t, bodyText, "ProjectName")
+	require.NotContains(t, bodyText, projectName)
+	require.NotContains(t, bodyText, accessKey)
+	require.NotContains(t, bodyText, secretKey)
+	require.NotContains(t, bodyText, assetGroupType)
+	require.NotContains(t, bodyText, region)
+	require.NotContains(t, bodyText, config.Proxy)
+
+	authorization := httpReq.Header.Get("Authorization")
+	require.Contains(t, authorization, "Credential="+accessKey+"/")
+	require.Contains(t, authorization, "/"+region+"/ark/request")
+	require.NotContains(t, authorization, secretKey)
 }
 
 func TestRecordModerationDiagnoseAuditDoesNotPersistRawOrCredentials(t *testing.T) {

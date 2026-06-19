@@ -27,7 +27,7 @@ const (
 	moderationDiagnoseTypeAssetID   = "asset_id"
 	moderationDiagnoseTypeRequestID = "request_id"
 
-	seedanceModerationDiagnoseActionName = "GetAIGCModerationResult"
+	seedanceModerationDiagnoseActionName = "GetModerationResult"
 )
 
 type moderationDiagnoseRequest struct {
@@ -44,6 +44,11 @@ type moderationDiagnoseRequest struct {
 type moderationDiagnoseQuery struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
+}
+
+type moderationDiagnoseUpstreamRequest struct {
+	ID   string `json:"Id"`
+	Type string `json:"Type"`
 }
 
 type moderationDiagnoseAttempt struct {
@@ -153,15 +158,6 @@ func runModerationDiagnose(c *gin.Context, req moderationDiagnoseRequest) (*mode
 			ChannelID:     channelID,
 			Resolved:      resolved,
 		}, err
-	}
-	if strings.TrimSpace(config.ProjectName) == "" {
-		return &moderationDiagnoseResponse{
-			SourceType:    req.SourceType,
-			RecordID:      recordID,
-			ResolvedQuery: queries[0],
-			ChannelID:     channelID,
-			Resolved:      resolved,
-		}, errors.New("byteplus_project_name is required on the selected channel")
 	}
 	if strings.TrimSpace(config.Region) == "" {
 		return &moderationDiagnoseResponse{
@@ -348,28 +344,34 @@ func findModerationDiagnoseTask(lookupID string) (*model.Task, error) {
 	return task, nil
 }
 
+func buildModerationDiagnoseRequestBody(query moderationDiagnoseQuery) ([]byte, error) {
+	return common.Marshal(moderationDiagnoseUpstreamRequest{
+		ID:   query.ID,
+		Type: query.Type,
+	})
+}
+
+func buildModerationDiagnoseTargetURL(baseURL string) (string, error) {
+	return buildSeedanceAssetTargetURL(baseURL, seedanceAssetAction{
+		Name: seedanceModerationDiagnoseActionName,
+		Path: "/",
+	})
+}
+
 func executeModerationDiagnoseQuery(c *gin.Context, query moderationDiagnoseQuery, baseURL string, accessKey string, secretKey string, config *seedanceAssetAdminConfig) moderationDiagnoseAttempt {
 	attempt := moderationDiagnoseAttempt{
 		ID:   query.ID,
 		Type: query.Type,
 	}
 
-	payload := map[string]any{
-		"ProjectName": config.ProjectName,
-		"Id":          query.ID,
-		"Type":        query.Type,
-	}
-	requestBody, err := common.Marshal(payload)
+	requestBody, err := buildModerationDiagnoseRequestBody(query)
 	if err != nil {
 		attempt.RawError = "failed to encode request body"
 		return attempt
 	}
-	attempt.RawRequestBody = string(redactSeedanceAssetResponseBody(requestBody, config.ProjectName))
+	attempt.RawRequestBody = string(requestBody)
 
-	targetURL, err := buildSeedanceAssetTargetURL(baseURL, seedanceAssetAction{
-		Name: seedanceModerationDiagnoseActionName,
-		Path: "/",
-	})
+	targetURL, err := buildModerationDiagnoseTargetURL(baseURL)
 	if err != nil {
 		attempt.RawError = "failed to build upstream url"
 		return attempt
