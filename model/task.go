@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -343,6 +345,42 @@ func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 		return nil, false, err
 	}
 	return task, exist, err
+}
+
+func GetByUpstreamTaskID(upstreamTaskID string) (*Task, bool, error) {
+	upstreamTaskID = strings.TrimSpace(upstreamTaskID)
+	if upstreamTaskID == "" {
+		return nil, false, nil
+	}
+
+	var tasks []*Task
+	query := DB.Model(&Task{})
+	switch {
+	case common.UsingPostgreSQL:
+		query = query.Where("private_data ->> 'upstream_task_id' = ?", upstreamTaskID)
+	case common.UsingMySQL:
+		query = query.Where("JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.upstream_task_id')) = ?", upstreamTaskID)
+	default:
+		query = query.Where("json_extract(private_data, '$.upstream_task_id') = ?", upstreamTaskID)
+	}
+	if err := query.Order("id ASC").Limit(2).Find(&tasks).Error; err != nil {
+		return nil, false, err
+	}
+
+	exactMatches := make([]*Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task != nil && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == upstreamTaskID {
+			exactMatches = append(exactMatches, task)
+		}
+	}
+	switch len(exactMatches) {
+	case 0:
+		return nil, false, nil
+	case 1:
+		return exactMatches[0], true, nil
+	default:
+		return nil, false, errors.New("multiple tasks share the same upstream task id")
+	}
 }
 
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {

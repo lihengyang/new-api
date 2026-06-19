@@ -203,3 +203,7 @@ func SearchRateLimit() func(c *gin.Context) {
 	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
 }
+
+func ModerationDiagnoseRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(10, 60, "MD")
+}

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Button,
@@ -42,7 +42,7 @@ const initialForm = {
   request_id: '',
   id: '',
   type: 'task_id',
-  channel_id: '',
+  credential_channel_id: '',
 };
 
 const codeBlockStyle = {
@@ -90,6 +90,9 @@ const ModerationDiagnose = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [lastSuccess, setLastSuccess] = useState(null);
+  const [credentialChannels, setCredentialChannels] = useState([]);
+  const [credentialChannelsLoading, setCredentialChannelsLoading] =
+    useState(false);
 
   const sourceOptions = useMemo(
     () => [
@@ -113,38 +116,49 @@ const ModerationDiagnose = () => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const parseChannelID = (required) => {
-    const raw = form.channel_id.trim();
-    if (!raw) {
-      if (required) {
-        showError('channel_id is required');
-        return null;
+  useEffect(() => {
+    let active = true;
+    const loadCredentialChannels = async () => {
+      setCredentialChannelsLoading(true);
+      try {
+        const res = await API.get(
+          '/api/admin/moderation/credential-channels',
+          {
+            skipErrorHandler: true,
+          },
+        );
+        if (!active) return;
+        const options = (res.data?.data || []).map((item) => ({
+          label: item.label,
+          value: item.id,
+        }));
+        setCredentialChannels(options);
+      } catch (error) {
+        if (active) {
+          showError(error);
+        }
+      } finally {
+        if (active) {
+          setCredentialChannelsLoading(false);
+        }
       }
-      return undefined;
-    }
-    const channelID = Number(raw);
-    if (!Number.isInteger(channelID) || channelID <= 0) {
-      showError('channel_id must be a positive integer');
-      return null;
-    }
-    return channelID;
-  };
+    };
+    loadCredentialChannels();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const buildPayload = () => {
     if (form.source_type === 'video_task') {
       const recordID = form.record_id.trim();
       if (!recordID) {
-        showError('task record id or task_id is required');
-        return null;
-      }
-      const channelID = parseChannelID(false);
-      if (channelID === null) {
+        showError('Task record ID / LSF task_id / BP task_id is required');
         return null;
       }
       return {
         source_type: form.source_type,
         record_id: recordID,
-        ...(channelID ? { channel_id: channelID } : {}),
       };
     }
 
@@ -154,15 +168,9 @@ const ModerationDiagnose = () => {
         showError('asset_id is required');
         return null;
       }
-      const channelID = parseChannelID(true);
-      if (channelID === null) {
-        return null;
-      }
       return {
         source_type: form.source_type,
         asset_id: assetID,
-        request_id: form.request_id.trim(),
-        channel_id: channelID,
       };
     }
 
@@ -171,15 +179,16 @@ const ModerationDiagnose = () => {
       showError('Id is required');
       return null;
     }
-    const channelID = parseChannelID(true);
-    if (channelID === null) {
+    const credentialChannelID = Number(form.credential_channel_id);
+    if (!Number.isInteger(credentialChannelID) || credentialChannelID <= 0) {
+      showError('Asset Admin credential channel is required');
       return null;
     }
     return {
       source_type: form.source_type,
       id,
       type: form.type,
-      channel_id: channelID,
+      credential_channel_id: credentialChannelID,
     };
   };
 
@@ -213,18 +222,10 @@ const ModerationDiagnose = () => {
         <>
           <Col xs={24} md={12}>
             <Form.Input
-              label={t('任务记录 / task_id')}
+              label='Task record ID / LSF task_id / BP task_id'
               field='record_id'
               value={form.record_id}
               onChange={(value) => updateField('record_id', value)}
-            />
-          </Col>
-          <Col xs={24} md={12}>
-            <Form.Input
-              label='channel_id'
-              field='channel_id'
-              value={form.channel_id}
-              onChange={(value) => updateField('channel_id', value)}
             />
           </Col>
         </>
@@ -242,21 +243,11 @@ const ModerationDiagnose = () => {
               onChange={(value) => updateField('asset_id', value)}
             />
           </Col>
-          <Col xs={24} md={12}>
-            <Form.Input
-              label='request_id'
-              field='request_id'
-              value={form.request_id}
-              onChange={(value) => updateField('request_id', value)}
-            />
-          </Col>
-          <Col xs={24} md={12}>
-            <Form.Input
-              label='channel_id'
-              field='channel_id'
-              value={form.channel_id}
-              onChange={(value) => updateField('channel_id', value)}
-            />
+          <Col xs={24}>
+            <Text type='tertiary'>
+              Asset ownership mapping is not currently persisted. Use manual
+              mode when automatic lookup is unavailable.
+            </Text>
           </Col>
         </>
       );
@@ -282,11 +273,15 @@ const ModerationDiagnose = () => {
           />
         </Col>
         <Col xs={24} md={12}>
-          <Form.Input
-            label='channel_id'
-            field='channel_id'
-            value={form.channel_id}
-            onChange={(value) => updateField('channel_id', value)}
+          <Form.Select
+            label='Asset Admin credential channel'
+            field='credential_channel_id'
+            optionList={credentialChannels}
+            value={form.credential_channel_id}
+            loading={credentialChannelsLoading}
+            onChange={(value) =>
+              updateField('credential_channel_id', value)
+            }
           />
         </Col>
       </>
