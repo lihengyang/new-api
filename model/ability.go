@@ -58,6 +58,35 @@ func GetAllEnableAbilities() []Ability {
 	return abilities
 }
 
+func GetEnabledAbilitiesForModels(group string, models []string) ([]Ability, error) {
+	abilities := make([]Ability, 0)
+	if len(models) == 0 {
+		return abilities, nil
+	}
+
+	query := DB.Model(&Ability{}).
+		Where("model IN ? and enabled = ?", models, true)
+	if strings.TrimSpace(group) != "" {
+		query = query.Where(&Ability{Group: strings.TrimSpace(group)})
+	}
+	err := query.
+		Order("priority DESC").
+		Order("channel_id ASC").
+		Find(&abilities).Error
+	return abilities, err
+}
+
+func ChannelHasEnabledAbilityForModels(channelID int, models []string) (bool, error) {
+	if channelID <= 0 || len(models) == 0 {
+		return false, nil
+	}
+	var count int64
+	err := DB.Model(&Ability{}).
+		Where("channel_id = ? and model IN ? and enabled = ?", channelID, models, true).
+		Count(&count).Error
+	return count > 0, err
+}
+
 func getPriority(group string, model string, retry int) (int, error) {
 
 	var priorities []int

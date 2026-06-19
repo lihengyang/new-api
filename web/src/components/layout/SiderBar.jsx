@@ -45,6 +45,7 @@ const routerMap = {
   detail: '/console',
   pricing: '/pricing',
   task: '/console/task',
+  moderation_diagnose: '/console/moderation-diagnose',
   models: '/console/models',
   deployment: '/console/deployment',
   playground: '/console/playground',
@@ -105,6 +106,15 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className:
           localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle',
       },
+      {
+        text: 'Moderation Diagnose',
+        itemKey: 'moderation_diagnose',
+        to: '/moderation-diagnose',
+        className:
+          isAdmin() && localStorage.getItem('enable_task') === 'true'
+            ? ''
+            : 'tableHiddle',
+      },
     ];
 
     // 根据配置过滤项目
@@ -120,6 +130,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     localStorage.getItem('enable_task'),
     t,
     isModuleVisible,
+    isAdmin(),
   ]);
 
   const financeItems = useMemo(() => {

@@ -3,7 +3,9 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -202,4 +204,48 @@ func SearchRateLimit() func(c *gin.Context) {
 		return defNext
 	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
+}
+
+func ModerationDiagnoseRateLimit() func(c *gin.Context) {
+	limiter := userRateLimitFactory(10, 60, "MD")
+	return func(c *gin.Context) {
+		if moderationDiagnoseSourceType(c) == "library_asset" {
+			c.Next()
+			return
+		}
+		limiter(c)
+		if c.IsAborted() && c.Writer.Status() == http.StatusTooManyRequests {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"message": "moderation diagnose rate limit exceeded",
+				"data": gin.H{
+					"result_status": "rate_limited",
+				},
+			})
+		}
+	}
+}
+
+func moderationDiagnoseSourceType(c *gin.Context) string {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return ""
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return ""
+	}
+	defer func() {
+		if _, seekErr := storage.Seek(0, io.SeekStart); seekErr == nil {
+			c.Request.Body = io.NopCloser(storage)
+		}
+	}()
+
+	var request struct {
+		SourceType string `json:"source_type"`
+	}
+	if err = common.Unmarshal(body, &request); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(request.SourceType)
 }

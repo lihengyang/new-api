@@ -34,6 +34,10 @@ func validUserInfo(username string, role int) bool {
 }
 
 func authHelper(c *gin.Context, minRole int) {
+	authHelperWithForbiddenStatus(c, minRole, http.StatusOK)
+}
+
+func authHelperWithForbiddenStatus(c *gin.Context, minRole int, forbiddenStatus int) {
 	session := sessions.Default(c)
 	username := session.Get("username")
 	role := session.Get("role")
@@ -129,7 +133,7 @@ func authHelper(c *gin.Context, minRole int) {
 		return
 	}
 	if role.(int) < minRole {
-		c.JSON(http.StatusOK, gin.H{
+		c.JSON(forbiddenStatus, gin.H{
 			"success": false,
 			"message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege),
 		})
@@ -176,6 +180,12 @@ func UserAuth() func(c *gin.Context) {
 func AdminAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleAdminUser)
+	}
+}
+
+func StrictAdminAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelperWithForbiddenStatus(c, common.RoleAdminUser, http.StatusForbidden)
 	}
 }
 
