@@ -28,6 +28,12 @@ const (
 	moderationDiagnoseTypeAssetID   = "asset_id"
 	moderationDiagnoseTypeRequestID = "request_id"
 
+	moderationDiagnoseResultFound           = "found"
+	moderationDiagnoseResultNotFound        = "not_found"
+	moderationDiagnoseResultRequestFailed   = "request_failed"
+	moderationDiagnoseResultValidationError = "validation_error"
+	moderationDiagnoseResultRateLimited     = "rate_limited"
+
 	seedanceModerationDiagnoseActionName = "GetModerationResult"
 	seedanceModerationDiagnoseRegion     = "ap-southeast-1"
 
@@ -40,6 +46,7 @@ var (
 		"seedance-virtual-asset-admin",
 		"seedance-real-human-asset-admin",
 	}
+	moderationDiagnoseQueryExecutor = executeModerationDiagnoseQuery
 )
 
 type moderationDiagnoseRequest struct {
@@ -51,6 +58,7 @@ type moderationDiagnoseRequest struct {
 	ID                  string `json:"id"`
 	Type                string `json:"type"`
 	CredentialChannelID int    `json:"credential_channel_id,omitempty"`
+	AssetAdminChannelID int    `json:"asset_admin_channel_id,omitempty"`
 }
 
 type moderationDiagnoseQuery struct {
@@ -74,6 +82,7 @@ type moderationDiagnoseAttempt struct {
 }
 
 type moderationDiagnoseResponse struct {
+	ResultStatus     string                      `json:"result_status"`
 	SourceType       string                      `json:"source_type"`
 	RecordID         string                      `json:"record_id,omitempty"`
 	ResolvedQuery    moderationDiagnoseQuery     `json:"resolved_query"`
@@ -119,7 +128,17 @@ func ModerationDiagnose(c *gin.Context) {
 	start := time.Now()
 	req := moderationDiagnoseRequest{}
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		common.ApiError(c, errors.New("invalid JSON request body"))
+		response := &moderationDiagnoseResponse{
+			ResultStatus:     moderationDiagnoseResultValidationError,
+			AttemptedQueries: make([]moderationDiagnoseAttempt, 0),
+		}
+		diagnoseErr := errors.New("invalid JSON request body")
+		recordModerationDiagnoseAudit(c, req, response, time.Since(start), diagnoseErr)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": diagnoseErr.Error(),
+			"data":    response,
+		})
 		return
 	}
 	normalizeModerationDiagnoseRequest(&req)
@@ -170,13 +189,18 @@ func normalizeModerationDiagnoseRequest(req *moderationDiagnoseRequest) {
 	req.RequestID = strings.TrimSpace(req.RequestID)
 	req.ID = strings.TrimSpace(req.ID)
 	req.Type = strings.ToLower(strings.TrimSpace(req.Type))
+	if req.AssetAdminChannelID == 0 {
+		req.AssetAdminChannelID = req.CredentialChannelID
+	}
 }
 
 func runModerationDiagnose(c *gin.Context, req moderationDiagnoseRequest) (*moderationDiagnoseResponse, error) {
 	target, err := resolveModerationTarget(req)
 	response := &moderationDiagnoseResponse{
-		SourceType: req.SourceType,
-		RecordID:   firstNonEmpty(req.RecordID, req.TaskID, req.AssetID, req.ID),
+		ResultStatus:     moderationDiagnoseResultValidationError,
+		SourceType:       req.SourceType,
+		RecordID:         firstNonEmpty(req.RecordID, req.TaskID, req.AssetID, req.ID),
+		AttemptedQueries: make([]moderationDiagnoseAttempt, 0),
 	}
 	if target != nil {
 		response.SourceType = target.SourceType
@@ -198,9 +222,10 @@ func runModerationDiagnose(c *gin.Context, req moderationDiagnoseRequest) (*mode
 		return response, err
 	}
 	response.credentialChannelID = credential.ChannelID
+	response.ResultStatus = moderationDiagnoseResultRequestFailed
 
 	for _, query := range target.Queries {
-		attempt := executeModerationDiagnoseQuery(
+		attempt := moderationDiagnoseQueryExecutor(
 			c,
 			query,
 			credential.BaseURL,
@@ -214,6 +239,7 @@ func runModerationDiagnose(c *gin.Context, req moderationDiagnoseRequest) (*mode
 		response.RawError = attempt.RawError
 		if attempt.Success {
 			response.ResolvedQuery = moderationDiagnoseQuery{ID: attempt.ID, Type: attempt.Type}
+			response.ResultStatus = moderationDiagnoseResultStatusForAttempt(attempt)
 			return response, nil
 		}
 	}
@@ -333,8 +359,8 @@ func resolveModerationManualTarget(req moderationDiagnoseRequest) (*moderationTa
 	if req.ID == "" {
 		return nil, errors.New("Id is required for manual diagnose")
 	}
-	if strings.HasPrefix(req.ID, "task_") || strings.HasPrefix(req.ID, "cgt-") {
-		task, err := findModerationDiagnoseTask(req.ID)
+	if req.Type == moderationDiagnoseTypeTaskID {
+		task, err := findManualModerationDiagnoseTask(req.ID)
 		if err == nil {
 			return buildModerationVideoTaskTarget(task)
 		}
@@ -345,7 +371,10 @@ func resolveModerationManualTarget(req moderationDiagnoseRequest) (*moderationTa
 	if !isAllowedModerationDiagnoseType(req.Type) {
 		return nil, errors.New("Type must be one of task_id, request_id, or asset_id")
 	}
-	if req.CredentialChannelID <= 0 {
+	if req.AssetAdminChannelID <= 0 {
+		if req.Type == moderationDiagnoseTypeTaskID {
+			return nil, errors.New("task ownership was not found; select an Asset Admin credential channel")
+		}
 		return nil, errors.New("Asset Admin credential channel is required for manual diagnose")
 	}
 
@@ -360,8 +389,18 @@ func resolveModerationManualTarget(req moderationDiagnoseRequest) (*moderationTa
 			"id":   req.ID,
 			"type": req.Type,
 		},
-		ManualCredentialChannelID: req.CredentialChannelID,
+		ManualCredentialChannelID: req.AssetAdminChannelID,
 	}, nil
+}
+
+func findManualModerationDiagnoseTask(lookupID string) (*model.Task, error) {
+	lookupID = strings.TrimSpace(lookupID)
+	if _, err := strconv.ParseInt(lookupID, 10, 64); err == nil ||
+		strings.HasPrefix(lookupID, "task_") ||
+		strings.HasPrefix(lookupID, "cgt-") {
+		return findModerationDiagnoseTask(lookupID)
+	}
+	return nil, errModerationDiagnoseTaskNotFound
 }
 
 func findModerationDiagnoseTask(lookupID string) (*model.Task, error) {
@@ -623,6 +662,16 @@ func isModerationDiagnoseSuccessStatus(statusCode int) bool {
 		statusCode == http.StatusNotFound
 }
 
+func moderationDiagnoseResultStatusForAttempt(attempt moderationDiagnoseAttempt) string {
+	if attempt.StatusCode == http.StatusNotFound {
+		return moderationDiagnoseResultNotFound
+	}
+	if attempt.Success {
+		return moderationDiagnoseResultFound
+	}
+	return moderationDiagnoseResultRequestFailed
+}
+
 func resolveSeedanceModerationConfigFromChannel(channel *model.Channel) (*seedanceAssetAdminConfig, error) {
 	if channel == nil {
 		return nil, errors.New("selected channel not found")
@@ -648,12 +697,14 @@ func recordModerationDiagnoseAudit(c *gin.Context, req moderationDiagnoseRequest
 		"source_type":           req.SourceType,
 		"record_id":             firstNonEmpty(req.RecordID, req.TaskID, req.AssetID, req.ID),
 		"credential_channel_id": 0,
+		"result_status":         moderationDiagnoseResultValidationError,
 		"query_time_ms":         queryTime.Milliseconds(),
 		"success":               diagnoseErr == nil,
 	}
 	if response != nil {
 		adminInfo["record_id"] = firstNonEmpty(response.RecordID, fmt.Sprintf("%v", adminInfo["record_id"]))
 		adminInfo["credential_channel_id"] = response.credentialChannelID
+		adminInfo["result_status"] = response.ResultStatus
 		adminInfo["resolved_id"] = response.ResolvedQuery.ID
 		adminInfo["resolved_type"] = response.ResolvedQuery.Type
 	}

@@ -3,7 +3,9 @@ package controller
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +31,7 @@ func setupModerationDiagnoseTestDB(t *testing.T) {
 	originalUsingSQLite := common.UsingSQLite
 	originalUsingMySQL := common.UsingMySQL
 	originalUsingPostgreSQL := common.UsingPostgreSQL
+	originalQueryExecutor := moderationDiagnoseQueryExecutor
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -55,7 +58,14 @@ func setupModerationDiagnoseTestDB(t *testing.T) {
 		common.UsingSQLite = originalUsingSQLite
 		common.UsingMySQL = originalUsingMySQL
 		common.UsingPostgreSQL = originalUsingPostgreSQL
+		moderationDiagnoseQueryExecutor = originalQueryExecutor
 	})
+}
+
+func newModerationDiagnoseTestContext() *gin.Context {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/admin/moderation/diagnose", nil)
+	return c
 }
 
 func createModerationChannel(
@@ -194,7 +204,7 @@ func TestResolveModerationVideoTaskTargetKeepsStoredOwnership(t *testing.T) {
 	target, err := resolveModerationTarget(moderationDiagnoseRequest{
 		SourceType:          moderationDiagnoseSourceVideoTask,
 		RecordID:            task.TaskID,
-		CredentialChannelID: 999,
+		AssetAdminChannelID: 999,
 	})
 
 	require.NoError(t, err)
@@ -371,13 +381,241 @@ func TestResolveModerationManualPrefersStoredTaskOwnership(t *testing.T) {
 		SourceType:          moderationDiagnoseSourceManual,
 		ID:                  task.PrivateData.UpstreamTaskID,
 		Type:                moderationDiagnoseTypeTaskID,
-		CredentialChannelID: manualChannel.Id,
+		AssetAdminChannelID: manualChannel.Id,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, moderationDiagnoseSourceVideoTask, target.SourceType)
 	require.NotNil(t, target.Tenant)
 	require.Zero(t, target.ManualCredentialChannelID)
+}
+
+func TestResolveModerationManualTaskOwnershipByAllIdentifiersWithoutCredential(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	_, task := createVideoTaskFixture(t, "tenant-a", "project-a")
+
+	for _, identifier := range []string{
+		strconv.FormatInt(task.ID, 10),
+		task.TaskID,
+		task.PrivateData.UpstreamTaskID,
+	} {
+		target, err := resolveModerationTarget(moderationDiagnoseRequest{
+			SourceType: moderationDiagnoseSourceManual,
+			ID:         identifier,
+			Type:       moderationDiagnoseTypeTaskID,
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, moderationDiagnoseSourceVideoTask, target.SourceType)
+		require.NotNil(t, target.Tenant)
+		require.Zero(t, target.ManualCredentialChannelID)
+	}
+}
+
+func TestResolveModerationManualExistingTaskIgnoresCredentialOverride(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	_, task := createVideoTaskFixture(t, "tenant-a", "project-a")
+	maliciousChannel := createModerationChannel(
+		t,
+		"malicious-access|malicious-secret",
+		"tenant-b",
+		"seedance-virtual-asset-admin",
+		"project-b",
+		100,
+	)
+
+	target, err := resolveModerationTarget(moderationDiagnoseRequest{
+		SourceType:          moderationDiagnoseSourceManual,
+		ID:                  strconv.FormatInt(task.ID, 10),
+		Type:                moderationDiagnoseTypeTaskID,
+		AssetAdminChannelID: maliciousChannel.Id,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, task.Group, target.Tenant.Group)
+	require.Zero(t, target.ManualCredentialChannelID)
+}
+
+func TestResolveModerationManualUnknownTaskRequiresCredential(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+
+	_, err := resolveModerationTarget(moderationDiagnoseRequest{
+		SourceType: moderationDiagnoseSourceManual,
+		ID:         "cgt-not-persisted",
+		Type:       moderationDiagnoseTypeTaskID,
+	})
+
+	require.EqualError(t, err, "task ownership was not found; select an Asset Admin credential channel")
+}
+
+func TestRunModerationManualUnknownTaskWithValidCredential(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	assetChannel := createModerationChannel(
+		t,
+		"access-placeholder|secret-placeholder",
+		"tenant-a",
+		"seedance-virtual-asset-admin",
+		"project-a",
+		20,
+	)
+	moderationDiagnoseQueryExecutor = func(
+		_ *gin.Context,
+		query moderationDiagnoseQuery,
+		_ string,
+		_ string,
+		_ string,
+		_ *seedanceAssetAdminConfig,
+	) moderationDiagnoseAttempt {
+		return moderationDiagnoseAttempt{
+			ID:          query.ID,
+			Type:        query.Type,
+			StatusCode:  http.StatusOK,
+			Success:     true,
+			RawResponse: `{"Result":"blocked"}`,
+		}
+	}
+
+	response, err := runModerationDiagnose(newModerationDiagnoseTestContext(), moderationDiagnoseRequest{
+		SourceType:          moderationDiagnoseSourceManual,
+		ID:                  "external-task-id",
+		Type:                moderationDiagnoseTypeTaskID,
+		AssetAdminChannelID: assetChannel.Id,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, moderationDiagnoseResultFound, response.ResultStatus)
+	require.Len(t, response.AttemptedQueries, 1)
+}
+
+func TestResolveModerationManualAssetAndRequestRequireCredential(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+
+	for _, queryType := range []string{
+		moderationDiagnoseTypeAssetID,
+		moderationDiagnoseTypeRequestID,
+	} {
+		_, err := resolveModerationTarget(moderationDiagnoseRequest{
+			SourceType: moderationDiagnoseSourceManual,
+			ID:         "upstream-id",
+			Type:       queryType,
+		})
+		require.EqualError(t, err, "Asset Admin credential channel is required for manual diagnose")
+	}
+}
+
+func TestRunModerationLibraryAssetDoesNotAttemptUpstream(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	executorCalls := 0
+	moderationDiagnoseQueryExecutor = func(
+		_ *gin.Context,
+		_ moderationDiagnoseQuery,
+		_ string,
+		_ string,
+		_ string,
+		_ *seedanceAssetAdminConfig,
+	) moderationDiagnoseAttempt {
+		executorCalls++
+		return moderationDiagnoseAttempt{}
+	}
+
+	response, err := runModerationDiagnose(newModerationDiagnoseTestContext(), moderationDiagnoseRequest{
+		SourceType: moderationDiagnoseSourceLibraryAsset,
+		AssetID:    "asset-placeholder",
+	})
+
+	require.EqualError(t, err, "asset ownership mapping is not available; use manual mode")
+	require.Equal(t, moderationDiagnoseResultValidationError, response.ResultStatus)
+	require.Empty(t, response.AttemptedQueries)
+	require.Zero(t, executorCalls)
+}
+
+func TestRunModerationDiagnoseResultStatuses(t *testing.T) {
+	testCases := []struct {
+		name           string
+		attempt        moderationDiagnoseAttempt
+		expectedStatus string
+		expectError    bool
+	}{
+		{
+			name: "found",
+			attempt: moderationDiagnoseAttempt{
+				StatusCode:  http.StatusOK,
+				Success:     true,
+				RawResponse: `{"BlockReason":"Copyright"}`,
+			},
+			expectedStatus: moderationDiagnoseResultFound,
+		},
+		{
+			name: "not found",
+			attempt: moderationDiagnoseAttempt{
+				StatusCode:  http.StatusNotFound,
+				Success:     true,
+				RawResponse: `{"Code":"NotFound.Id"}`,
+			},
+			expectedStatus: moderationDiagnoseResultNotFound,
+		},
+		{
+			name: "request failed",
+			attempt: moderationDiagnoseAttempt{
+				StatusCode: http.StatusBadGateway,
+				Success:    false,
+				RawError:   "upstream request failed",
+			},
+			expectedStatus: moderationDiagnoseResultRequestFailed,
+			expectError:    true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupModerationDiagnoseTestDB(t)
+			_, task := createVideoTaskFixture(t, "tenant-a", "project-a")
+			createModerationChannel(
+				t,
+				"access-placeholder|secret-placeholder",
+				"tenant-a",
+				"seedance-virtual-asset-admin",
+				"project-a",
+				20,
+			)
+			moderationDiagnoseQueryExecutor = func(
+				_ *gin.Context,
+				query moderationDiagnoseQuery,
+				_ string,
+				_ string,
+				_ string,
+				_ *seedanceAssetAdminConfig,
+			) moderationDiagnoseAttempt {
+				attempt := tc.attempt
+				attempt.ID = query.ID
+				attempt.Type = query.Type
+				return attempt
+			}
+
+			response, err := runModerationDiagnose(newModerationDiagnoseTestContext(), moderationDiagnoseRequest{
+				SourceType: moderationDiagnoseSourceVideoTask,
+				RecordID:   task.TaskID,
+			})
+
+			if tc.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.expectedStatus, response.ResultStatus)
+		})
+	}
+}
+
+func TestRunModerationDiagnoseValidationStatus(t *testing.T) {
+	response, err := runModerationDiagnose(newModerationDiagnoseTestContext(), moderationDiagnoseRequest{
+		SourceType: moderationDiagnoseSourceManual,
+		ID:         "asset-placeholder",
+		Type:       moderationDiagnoseTypeAssetID,
+	})
+
+	require.Error(t, err)
+	require.Equal(t, moderationDiagnoseResultValidationError, response.ResultStatus)
 }
 
 func TestListModerationCredentialChannelsFiltersUnsafeChannels(t *testing.T) {
@@ -391,6 +629,31 @@ func TestListModerationCredentialChannelsFiltersUnsafeChannels(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.Equal(t, valid.Id, candidates[0].ChannelID)
+}
+
+func TestGetModerationCredentialChannelsReturnsSafeLabelsOnly(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	valid := createModerationChannel(
+		t,
+		"access-placeholder|secret-placeholder",
+		"tenant-a",
+		"seedance-virtual-asset-admin",
+		"project-placeholder",
+		20,
+	)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	GetModerationCredentialChannels(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	body := recorder.Body.String()
+	require.Contains(t, body, fmt.Sprintf("Asset Admin credential #%d", valid.Id))
+	require.NotContains(t, body, "access-placeholder")
+	require.NotContains(t, body, "secret-placeholder")
+	require.NotContains(t, body, "project-placeholder")
+	require.NotContains(t, body, "tenant-a")
+	require.NotContains(t, body, "seedance-virtual-asset-admin")
 }
 
 func TestBuildModerationDiagnoseRequestUsesOfficialContractAndArkRegion(t *testing.T) {

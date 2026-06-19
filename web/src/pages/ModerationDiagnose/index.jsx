@@ -17,13 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  Banner,
   Button,
   Card,
   Col,
+  Collapse,
   Divider,
+  Empty,
   Form,
   Row,
   Space,
@@ -32,18 +35,14 @@ import {
 } from '@douyinfe/semi-ui';
 import { Search } from 'lucide-react';
 import { API, showError, showSuccess } from '../../helpers';
+import {
+  buildModerationDiagnosePayload,
+  getModerationResultPresentation,
+  initialModerationDiagnoseState,
+  moderationDiagnoseReducer,
+} from './state';
 
 const { Title, Text } = Typography;
-
-const initialForm = {
-  source_type: 'video_task',
-  record_id: '',
-  asset_id: '',
-  request_id: '',
-  id: '',
-  type: 'task_id',
-  credential_channel_id: '',
-};
 
 const codeBlockStyle = {
   background: 'var(--semi-color-bg-2)',
@@ -75,10 +74,15 @@ function formatRaw(value) {
   }
 }
 
-function ResultBlock({ title, value }) {
+function ResultBlock({ title, description, value }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <Text strong>{title}</Text>
+      {description && (
+        <div style={{ marginTop: 4 }}>
+          <Text type='tertiary'>{description}</Text>
+        </div>
+      )}
       <pre style={{ ...codeBlockStyle, marginTop: 8 }}>{formatRaw(value)}</pre>
     </div>
   );
@@ -86,10 +90,11 @@ function ResultBlock({ title, value }) {
 
 const ModerationDiagnose = () => {
   const { t } = useTranslation();
-  const [form, setForm] = useState(initialForm);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [lastSuccess, setLastSuccess] = useState(null);
+  const [state, dispatch] = useReducer(
+    moderationDiagnoseReducer,
+    initialModerationDiagnoseState,
+  );
+  const { form, loading, result } = state;
   const [credentialChannels, setCredentialChannels] = useState([]);
   const [credentialChannelsLoading, setCredentialChannelsLoading] =
     useState(false);
@@ -113,7 +118,7 @@ const ModerationDiagnose = () => {
   );
 
   const updateField = (key, value) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    dispatch({ type: 'update_field', field: key, value });
   };
 
   useEffect(() => {
@@ -121,12 +126,9 @@ const ModerationDiagnose = () => {
     const loadCredentialChannels = async () => {
       setCredentialChannelsLoading(true);
       try {
-        const res = await API.get(
-          '/api/admin/moderation/credential-channels',
-          {
-            skipErrorHandler: true,
-          },
-        );
+        const res = await API.get('/api/admin/moderation/credential-channels', {
+          skipErrorHandler: true,
+        });
         if (!active) return;
         const options = (res.data?.data || []).map((item) => ({
           label: item.label,
@@ -149,71 +151,41 @@ const ModerationDiagnose = () => {
     };
   }, []);
 
-  const buildPayload = () => {
-    if (form.source_type === 'video_task') {
-      const recordID = form.record_id.trim();
-      if (!recordID) {
-        showError('Task record ID / LSF task_id / BP task_id is required');
-        return null;
-      }
-      return {
-        source_type: form.source_type,
-        record_id: recordID,
-      };
-    }
-
-    if (form.source_type === 'library_asset') {
-      const assetID = form.asset_id.trim();
-      if (!assetID) {
-        showError('asset_id is required');
-        return null;
-      }
-      return {
-        source_type: form.source_type,
-        asset_id: assetID,
-      };
-    }
-
-    const id = form.id.trim();
-    if (!id) {
-      showError('Id is required');
-      return null;
-    }
-    const credentialChannelID = Number(form.credential_channel_id);
-    if (!Number.isInteger(credentialChannelID) || credentialChannelID <= 0) {
-      showError('Asset Admin credential channel is required');
-      return null;
-    }
-    return {
-      source_type: form.source_type,
-      id,
-      type: form.type,
-      credential_channel_id: credentialChannelID,
-    };
-  };
-
   const runDiagnose = async () => {
-    const payload = buildPayload();
-    if (!payload) {
+    dispatch({ type: 'query_start' });
+    const { payload, error } = buildModerationDiagnosePayload(form);
+    if (error) {
+      dispatch({ type: 'validation_failed' });
+      showError(error);
       return;
     }
-    setLoading(true);
     try {
       const res = await API.post('/api/admin/moderation/diagnose', payload, {
         skipErrorHandler: true,
       });
-      setResult(res.data?.data || null);
-      setLastSuccess(Boolean(res.data?.success));
-      if (res.data?.success) {
+      const nextResult = res.data?.data || null;
+      dispatch({ type: 'query_complete', result: nextResult });
+      if (nextResult?.result_status === 'found') {
         showSuccess(t('操作成功'));
-      } else {
+      } else if (
+        nextResult?.result_status === 'request_failed' ||
+        nextResult?.result_status === 'validation_error'
+      ) {
         showError(res.data?.message || t('操作失败'));
       }
     } catch (error) {
+      const rateLimitResult = error?.response?.data?.data;
+      if (rateLimitResult?.result_status === 'rate_limited') {
+        dispatch({ type: 'query_complete', result: rateLimitResult });
+      } else {
+        dispatch({ type: 'request_failed' });
+      }
       showError(error);
-    } finally {
-      setLoading(false);
     }
+  };
+
+  const continueLibraryAssetInManualMode = () => {
+    dispatch({ type: 'continue_manual' });
   };
 
   const renderSourceFields = () => {
@@ -246,8 +218,13 @@ const ModerationDiagnose = () => {
           <Col xs={24}>
             <Text type='tertiary'>
               Asset ownership mapping is not currently persisted. Use manual
-              mode when automatic lookup is unavailable.
+              mode to query an upstream asset ID.
             </Text>
+          </Col>
+          <Col xs={24}>
+            <Button onClick={continueLibraryAssetInManualMode}>
+              Continue in manual mode
+            </Button>
           </Col>
         </>
       );
@@ -275,18 +252,25 @@ const ModerationDiagnose = () => {
         <Col xs={24} md={12}>
           <Form.Select
             label='Asset Admin credential channel'
-            field='credential_channel_id'
+            field='asset_admin_channel_id'
             optionList={credentialChannels}
-            value={form.credential_channel_id}
+            value={form.asset_admin_channel_id}
             loading={credentialChannelsLoading}
-            onChange={(value) =>
-              updateField('credential_channel_id', value)
-            }
+            onChange={(value) => updateField('asset_admin_channel_id', value)}
           />
+        </Col>
+        <Col xs={24}>
+          <Text type='tertiary'>
+            {form.type === 'task_id'
+              ? 'Known LSF/BP tasks are resolved automatically. Select a credential channel only for external task IDs.'
+              : 'Select the Asset Admin credential channel that owns this upstream ID.'}
+          </Text>
         </Col>
       </>
     );
   };
+
+  const presentation = getModerationResultPresentation(result?.result_status);
 
   return (
     <div className='mt-[60px] px-2'>
@@ -317,6 +301,7 @@ const ModerationDiagnose = () => {
                   type='primary'
                   icon={<Search size={16} />}
                   loading={loading}
+                  disabled={form.source_type === 'library_asset'}
                   onClick={runDiagnose}
                 >
                   {t('查询')}
@@ -324,9 +309,7 @@ const ModerationDiagnose = () => {
                 <Button
                   type='tertiary'
                   onClick={() => {
-                    setForm(initialForm);
-                    setResult(null);
-                    setLastSuccess(null);
+                    dispatch({ type: 'reset' });
                   }}
                 >
                   {t('重置')}
@@ -338,27 +321,62 @@ const ModerationDiagnose = () => {
             <Card bodyStyle={{ padding: 18 }}>
               <Space style={{ marginBottom: 16 }}>
                 <Text strong>{t('诊断结果')}</Text>
-                {lastSuccess !== null && (
-                  <Tag color={lastSuccess ? 'green' : 'red'} size='small'>
-                    {lastSuccess ? 'success' : 'failure'}
+                {result && (
+                  <Tag color={presentation.color} size='small'>
+                    {presentation.label}
                   </Tag>
                 )}
               </Space>
-              <ResultBlock
-                title='resolved query'
-                value={result?.resolved_query}
-              />
-              <ResultBlock title='resolved details' value={result?.resolved} />
-              <ResultBlock
-                title='attempted queries'
-                value={result?.attempted_queries}
-              />
-              <ResultBlock
-                title='raw request body'
-                value={result?.raw_request_body}
-              />
-              <ResultBlock title='raw response' value={result?.raw_response} />
-              <ResultBlock title='raw error' value={result?.raw_error} />
+              {!result ? (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description='No diagnostic result yet.'
+                />
+              ) : (
+                <>
+                  <ResultBlock
+                    title='Result status'
+                    value={presentation.label}
+                  />
+                  {result.result_status === 'not_found' && (
+                    <Banner
+                      type='info'
+                      style={{ marginBottom: 18 }}
+                      description='The ID may be invalid, not moderation-blocked, outside the 14-day window, or created before whitelist activation.'
+                    />
+                  )}
+                  <ResultBlock
+                    title='Resolved query'
+                    value={result.resolved_query}
+                  />
+                  <ResultBlock
+                    title='Resolved details'
+                    value={result.resolved}
+                  />
+                  <ResultBlock
+                    title='Raw response'
+                    description='The final redacted response returned by BytePlus.'
+                    value={result.raw_response}
+                  />
+                  <Collapse>
+                    <Collapse.Panel
+                      header='Advanced diagnostics'
+                      itemKey='advanced-diagnostics'
+                    >
+                      <ResultBlock
+                        title='Attempted queries'
+                        description='All upstream query attempts, including fallback attempts.'
+                        value={result.attempted_queries}
+                      />
+                      <ResultBlock
+                        title='Raw request body'
+                        value={result.raw_request_body}
+                      />
+                      <ResultBlock title='Raw error' value={result.raw_error} />
+                    </Collapse.Panel>
+                  </Collapse>
+                </>
+              )}
             </Card>
           </Col>
         </Row>

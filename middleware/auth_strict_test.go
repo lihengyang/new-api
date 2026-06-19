@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -65,19 +66,121 @@ func TestModerationDiagnoseRateLimitAllowsTenRequestsPerMinute(t *testing.T) {
 		c.Set("id", 424242)
 		c.Next()
 	})
+	handlerCalls := 0
 	router.POST("/diagnose", ModerationDiagnoseRateLimit(), func(c *gin.Context) {
+		var payload map[string]any
+		require.NoError(t, common.DecodeJson(c.Request.Body, &payload))
+		require.Equal(t, "manual", payload["source_type"])
+		handlerCalls++
 		c.Status(http.StatusNoContent)
 	})
 
 	for i := 0; i < 10; i++ {
-		request := httptest.NewRequest(http.MethodPost, "/diagnose", nil)
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/diagnose",
+			strings.NewReader(`{"source_type":"manual"}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusNoContent, recorder.Code)
+	}
+	require.Equal(t, 10, handlerCalls)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/diagnose",
+		strings.NewReader(`{"source_type":"manual"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Equal(t, 10, handlerCalls)
+
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	data, ok := response["data"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "rate_limited", data["result_status"])
+}
+
+func TestModerationDiagnoseRateLimitDoesNotAffectOtherAPIs(t *testing.T) {
+	originalRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+	})
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 434343)
+		c.Next()
+	})
+	router.POST("/diagnose", ModerationDiagnoseRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.POST("/other-admin-api", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	for i := 0; i < 11; i++ {
+		diagnoseRequest := httptest.NewRequest(
+			http.MethodPost,
+			"/diagnose",
+			strings.NewReader(`{"source_type":"manual"}`),
+		)
+		diagnoseRequest.Header.Set("Content-Type", "application/json")
+		diagnoseRecorder := httptest.NewRecorder()
+		router.ServeHTTP(diagnoseRecorder, diagnoseRequest)
+
+		otherRequest := httptest.NewRequest(http.MethodPost, "/other-admin-api", nil)
+		otherRecorder := httptest.NewRecorder()
+		router.ServeHTTP(otherRecorder, otherRequest)
+		require.Equal(t, http.StatusNoContent, otherRecorder.Code)
+	}
+}
+
+func TestModerationDiagnoseLibraryBoundaryDoesNotConsumeRateLimit(t *testing.T) {
+	originalRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+	})
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 444444)
+		c.Next()
+	})
+	router.POST("/diagnose", ModerationDiagnoseRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	for i := 0; i < 20; i++ {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/diagnose",
+			strings.NewReader(`{"source_type":"library_asset","asset_id":"asset-placeholder"}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, request)
 		require.Equal(t, http.StatusNoContent, recorder.Code)
 	}
 
-	request := httptest.NewRequest(http.MethodPost, "/diagnose", nil)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	for i := 0; i < 10; i++ {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/diagnose",
+			strings.NewReader(`{"source_type":"manual"}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusNoContent, recorder.Code)
+	}
 }
