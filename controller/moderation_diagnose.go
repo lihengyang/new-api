@@ -43,11 +43,13 @@ const (
 	moderationDiagnoseCGTLookupTolerance  = 15 * time.Minute
 	moderationDiagnoseCGTTimestampLayout  = "20060102150405"
 	moderationDiagnoseCGTExpectedIDFormat = "cgt-YYYYMMDDHHMMSS-xxxxx"
+	moderationDiagnoseCGTUTCOffset        = 8 * 60 * 60
 )
 
 var (
 	errModerationDiagnoseTaskNotFound = errors.New("task not found")
 	moderationDiagnoseCGTIDPattern    = regexp.MustCompile(`^cgt-(\d{14})-([A-Za-z0-9]{5})$`)
+	moderationDiagnoseCGTLocation     = time.FixedZone("BP-UTC+8", moderationDiagnoseCGTUTCOffset)
 	moderationAssetAdminModels        = []string{
 		"seedance-virtual-asset-admin",
 		"seedance-real-human-asset-admin",
@@ -458,7 +460,11 @@ func moderationDiagnoseCGTLookupRange(taskID string, now time.Time) (int64, int6
 		return 0, 0, fmt.Errorf("BP task ID must match %s", moderationDiagnoseCGTExpectedIDFormat)
 	}
 
-	taskTime, err := time.ParseInLocation(moderationDiagnoseCGTTimestampLayout, matches[1], time.UTC)
+	taskTime, err := time.ParseInLocation(
+		moderationDiagnoseCGTTimestampLayout,
+		matches[1],
+		moderationDiagnoseCGTLocation,
+	)
 	if err != nil {
 		return 0, 0, fmt.Errorf("BP task ID must match %s", moderationDiagnoseCGTExpectedIDFormat)
 	}

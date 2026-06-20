@@ -131,7 +131,7 @@ func createModerationDiagnoseTask(
 }
 
 func moderationTestCGTID(at time.Time, suffix string) string {
-	return "cgt-" + at.UTC().Format(moderationDiagnoseCGTTimestampLayout) + "-" + suffix
+	return "cgt-" + at.In(moderationDiagnoseCGTLocation).Format(moderationDiagnoseCGTTimestampLayout) + "-" + suffix
 }
 
 func createVideoTaskFixture(t *testing.T, group string, projectName string) (model.Channel, model.Task) {
@@ -242,6 +242,18 @@ func TestFindModerationDiagnoseTaskValidMissingCGTReturnsNotFound(t *testing.T) 
 	require.Nil(t, task)
 	require.ErrorIs(t, err, errModerationDiagnoseTaskNotFound)
 	require.Equal(t, 1, queryCount)
+}
+
+func TestModerationDiagnoseCGTLookupRangeUsesBPUTCPlusEightTimestamp(t *testing.T) {
+	start, end, err := moderationDiagnoseCGTLookupRange(
+		"cgt-20260617133228-vvph2",
+		time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1781673448), start)
+	require.Equal(t, int64(1781675248), end)
+	require.Equal(t, int64((30*time.Minute)/time.Second), end-start)
 }
 
 func TestFindModerationDiagnoseTaskDoesNotFallbackNumericInputToPublicTaskID(t *testing.T) {
@@ -486,6 +498,94 @@ func TestResolveModerationManualTaskOwnershipByAllIdentifiersWithoutCredential(t
 		require.NotNil(t, target.Tenant)
 		require.Zero(t, target.ManualCredentialChannelID)
 	}
+}
+
+func TestResolveModerationManualPreflightCGTTaskOwnershipWithoutCredential(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	lookupSQL := make([]string, 0, 1)
+	callbackName := "test:moderation-diagnose-preflight-cgt-query"
+	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		sql := tx.Statement.SQL.String()
+		if strings.Contains(sql, "upstream_task_id") {
+			lookupSQL = append(lookupSQL, sql)
+		}
+	}))
+	t.Cleanup(func() {
+		_ = model.DB.Callback().Query().Remove(callbackName)
+	})
+
+	videoChannel := createModerationChannel(
+		t,
+		"video-bearer-placeholder",
+		"tenant-a",
+		"tenant-video-alias",
+		"project-a",
+		10,
+	)
+	task := model.Task{
+		ID:         2658,
+		CreatedAt:  1781674348,
+		SubmitTime: 1781674348,
+		TaskID:     "task_uM6pD77ClQftS10UjJDkLVoUonrj10Zi",
+		ChannelId:  videoChannel.Id,
+		Group:      "tenant-a",
+		Platform:   constant.TaskPlatform("doubao"),
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "cgt-20260617133228-vvph2",
+		},
+	}
+	require.NoError(t, model.DB.Create(&task).Error)
+
+	target, err := resolveModerationTarget(moderationDiagnoseRequest{
+		SourceType: moderationDiagnoseSourceManual,
+		ID:         task.PrivateData.UpstreamTaskID,
+		Type:       moderationDiagnoseTypeTaskID,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, moderationDiagnoseSourceVideoTask, target.SourceType)
+	require.Equal(t, int64(2658), target.Resolved["task_record_id"])
+	require.Equal(t, "tenant-a", target.Tenant.Group)
+	require.Zero(t, target.ManualCredentialChannelID)
+	require.Len(t, lookupSQL, 1)
+	require.Contains(t, lookupSQL[0], "created_at >=")
+	require.Contains(t, lookupSQL[0], "created_at <=")
+	require.Contains(t, lookupSQL[0], "json_extract")
+	require.Contains(t, lookupSQL[0], "LIMIT 2")
+}
+
+func TestResolveModerationManualSimilarPreflightCGTRequiresCredential(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	videoChannel := createModerationChannel(
+		t,
+		"video-bearer-placeholder",
+		"tenant-a",
+		"tenant-video-alias",
+		"project-a",
+		10,
+	)
+	task := model.Task{
+		ID:         2658,
+		CreatedAt:  1781674348,
+		SubmitTime: 1781674348,
+		TaskID:     "task_uM6pD77ClQftS10UjJDkLVoUonrj10Zi",
+		ChannelId:  videoChannel.Id,
+		Group:      "tenant-a",
+		Platform:   constant.TaskPlatform("doubao"),
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "cgt-20260617133228-vvph2",
+		},
+	}
+	require.NoError(t, model.DB.Create(&task).Error)
+
+	target, err := resolveModerationTarget(moderationDiagnoseRequest{
+		SourceType: moderationDiagnoseSourceManual,
+		ID:         "cgt-20260617133228-vvph3",
+		Type:       moderationDiagnoseTypeTaskID,
+	})
+
+	require.Nil(t, target)
+	require.EqualError(t, err, "task ownership was not found; select an Asset Admin credential channel")
 }
 
 func TestResolveModerationManualExistingTaskIgnoresCredentialOverride(t *testing.T) {
