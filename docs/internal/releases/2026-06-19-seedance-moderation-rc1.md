@@ -1,10 +1,21 @@
 # Seedance Moderation Diagnose Production Candidate RC1
 
 Date: 2026-06-19
-Status: local production candidate; not deployed
+Status: blocked; not deployed
 Candidate image: `new-api:seedance-moderation-rc1`
 Release branch: `release/seedance-moderation-v1`
 Candidate runtime code commit: `ddc7647919c39948754084c829581f236c007f73`
+
+## Superseded by RC2
+
+RC1 was blocked during the final release-difference closure audit because exact
+`cgt-...` lookup filtered only on the unindexed
+`private_data.upstream_task_id` JSON expression. `LIMIT 2` bounded returned
+rows but did not bound rows scanned for missing or rare IDs. SQLite
+`EXPLAIN QUERY PLAN` confirmed `SCAN tasks`.
+
+RC1 was not deployed. RC2 supersedes it with strict BP task-ID timestamp
+validation and a narrow indexed `created_at` lookup window.
 
 ## Production Baseline
 
