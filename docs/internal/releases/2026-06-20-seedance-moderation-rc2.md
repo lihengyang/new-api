@@ -1,10 +1,23 @@
 # Seedance Moderation Diagnose Production Candidate RC2
 
 Date: 2026-06-20
-Status: local production candidate; not deployed
+Status: blocked in preflight; superseded by RC3; not deployed
 Candidate image: `new-api:seedance-moderation-rc2`
 Release branch: `release/seedance-moderation-v1`
 Candidate runtime code commit: `54fa1249`
+
+## RC2 Preflight Blocker
+
+RC2 is not eligible for production.
+
+Preflight task record `2658` established that the timestamp embedded in BP
+`cgt-...` identifiers is expressed in fixed UTC+8, while RC2 parsed it as UTC.
+The indexed 30-minute `created_at` range was therefore shifted eight hours
+forward and could fail to recover an existing task's ownership.
+
+RC3 supersedes RC2 by parsing the embedded timestamp in fixed UTC+8 before
+converting it to the Unix `created_at` range. RC2 must remain recorded as a
+failed candidate and must not be relabeled or deployed.
 
 ## Production Baseline
 
