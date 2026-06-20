@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,11 +38,16 @@ const (
 	seedanceModerationDiagnoseActionName = "GetModerationResult"
 	seedanceModerationDiagnoseRegion     = "ap-southeast-1"
 
-	moderationDiagnoseTaskMaxAge = 14 * 24 * time.Hour
+	moderationDiagnoseTaskMaxAge          = 14 * 24 * time.Hour
+	moderationDiagnoseCGTFutureTolerance  = 2 * time.Hour
+	moderationDiagnoseCGTLookupTolerance  = 15 * time.Minute
+	moderationDiagnoseCGTTimestampLayout  = "20060102150405"
+	moderationDiagnoseCGTExpectedIDFormat = "cgt-YYYYMMDDHHMMSS-xxxxx"
 )
 
 var (
 	errModerationDiagnoseTaskNotFound = errors.New("task not found")
+	moderationDiagnoseCGTIDPattern    = regexp.MustCompile(`^cgt-(\d{14})-([A-Za-z0-9]{5})$`)
 	moderationAssetAdminModels        = []string{
 		"seedance-virtual-asset-admin",
 		"seedance-real-human-asset-admin",
@@ -429,7 +435,11 @@ func findModerationDiagnoseTask(lookupID string) (*model.Task, error) {
 	case strings.HasPrefix(lookupID, "task_"):
 		task, exists, err = model.GetByOnlyTaskId(lookupID)
 	case strings.HasPrefix(lookupID, "cgt-"):
-		task, exists, err = model.GetByUpstreamTaskID(lookupID)
+		createdAtStart, createdAtEnd, parseErr := moderationDiagnoseCGTLookupRange(lookupID, time.Now().UTC())
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		task, exists, err = model.GetByUpstreamTaskID(lookupID, createdAtStart, createdAtEnd)
 	default:
 		return nil, errors.New("task identifier must be a numeric record ID, task_..., or cgt-...")
 	}
@@ -440,6 +450,30 @@ func findModerationDiagnoseTask(lookupID string) (*model.Task, error) {
 		return nil, errModerationDiagnoseTaskNotFound
 	}
 	return task, nil
+}
+
+func moderationDiagnoseCGTLookupRange(taskID string, now time.Time) (int64, int64, error) {
+	matches := moderationDiagnoseCGTIDPattern.FindStringSubmatch(strings.TrimSpace(taskID))
+	if len(matches) != 3 {
+		return 0, 0, fmt.Errorf("BP task ID must match %s", moderationDiagnoseCGTExpectedIDFormat)
+	}
+
+	taskTime, err := time.ParseInLocation(moderationDiagnoseCGTTimestampLayout, matches[1], time.UTC)
+	if err != nil {
+		return 0, 0, fmt.Errorf("BP task ID must match %s", moderationDiagnoseCGTExpectedIDFormat)
+	}
+
+	now = now.UTC()
+	if taskTime.After(now.Add(moderationDiagnoseCGTFutureTolerance)) {
+		return 0, 0, errors.New("BP task ID timestamp is too far in the future")
+	}
+	if taskTime.Before(now.Add(-moderationDiagnoseTaskMaxAge)) {
+		return 0, 0, errors.New("BP task ID is outside the 14-day moderation lookup window")
+	}
+
+	return taskTime.Add(-moderationDiagnoseCGTLookupTolerance).Unix(),
+		taskTime.Add(moderationDiagnoseCGTLookupTolerance).Unix(),
+		nil
 }
 
 func resolveModerationCredential(target *moderationTarget) (*moderationCredential, error) {

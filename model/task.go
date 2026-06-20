@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -347,23 +348,18 @@ func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	return task, exist, err
 }
 
-func GetByUpstreamTaskID(upstreamTaskID string) (*Task, bool, error) {
+func GetByUpstreamTaskID(upstreamTaskID string, createdAtStart int64, createdAtEnd int64) (*Task, bool, error) {
 	upstreamTaskID = strings.TrimSpace(upstreamTaskID)
 	if upstreamTaskID == "" {
 		return nil, false, nil
 	}
+	if createdAtStart <= 0 || createdAtEnd <= 0 || createdAtStart > createdAtEnd {
+		return nil, false, errors.New("invalid upstream task lookup time range")
+	}
 
 	var tasks []*Task
-	query := DB.Model(&Task{})
-	switch {
-	case common.UsingPostgreSQL:
-		query = query.Where("private_data ->> 'upstream_task_id' = ?", upstreamTaskID)
-	case common.UsingMySQL:
-		query = query.Where("JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.upstream_task_id')) = ?", upstreamTaskID)
-	default:
-		query = query.Where("json_extract(private_data, '$.upstream_task_id') = ?", upstreamTaskID)
-	}
-	if err := query.Order("id ASC").Limit(2).Find(&tasks).Error; err != nil {
+	query := buildUpstreamTaskIDQuery(DB, upstreamTaskID, createdAtStart, createdAtEnd)
+	if err := query.Find(&tasks).Error; err != nil {
 		return nil, false, err
 	}
 
@@ -381,6 +377,20 @@ func GetByUpstreamTaskID(upstreamTaskID string) (*Task, bool, error) {
 	default:
 		return nil, false, errors.New("multiple tasks share the same upstream task id")
 	}
+}
+
+func buildUpstreamTaskIDQuery(db *gorm.DB, upstreamTaskID string, createdAtStart int64, createdAtEnd int64) *gorm.DB {
+	query := db.Model(&Task{}).
+		Where("created_at >= ? and created_at <= ?", createdAtStart, createdAtEnd)
+	switch {
+	case common.UsingPostgreSQL:
+		query = query.Where("private_data ->> 'upstream_task_id' = ?", upstreamTaskID)
+	case common.UsingMySQL:
+		query = query.Where("JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.upstream_task_id')) = ?", upstreamTaskID)
+	default:
+		query = query.Where("json_extract(private_data, '$.upstream_task_id') = ?", upstreamTaskID)
+	}
+	return query.Order("id ASC").Limit(2)
 }
 
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {

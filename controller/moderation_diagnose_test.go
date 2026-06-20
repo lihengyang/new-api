@@ -111,6 +111,7 @@ func createModerationDiagnoseTask(
 	dataBytes, err := common.Marshal(data)
 	require.NoError(t, err)
 	task := model.Task{
+		CreatedAt:  time.Now().Unix(),
 		TaskID:     taskID,
 		ChannelId:  channelID,
 		Group:      group,
@@ -129,8 +130,13 @@ func createModerationDiagnoseTask(
 	return task
 }
 
+func moderationTestCGTID(at time.Time, suffix string) string {
+	return "cgt-" + at.UTC().Format(moderationDiagnoseCGTTimestampLayout) + "-" + suffix
+}
+
 func createVideoTaskFixture(t *testing.T, group string, projectName string) (model.Channel, model.Task) {
 	t.Helper()
+	upstreamTaskID := moderationTestCGTID(time.Now(), "abc12")
 	videoChannel := createModerationChannel(
 		t,
 		"video-bearer-placeholder",
@@ -144,8 +150,8 @@ func createVideoTaskFixture(t *testing.T, group string, projectName string) (mod
 		"task_fixture_123",
 		videoChannel.Id,
 		group,
-		"cgt-fixture-123",
-		map[string]any{"id": "cgt-fixture-123"},
+		upstreamTaskID,
+		map[string]any{"id": upstreamTaskID},
 	)
 	return videoChannel, task
 }
@@ -166,8 +172,76 @@ func TestFindModerationDiagnoseTaskUsesStrictIdentifierRules(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, task.ID, byUpstreamID.ID)
 
-	_, err = findModerationDiagnoseTask(task.PrivateData.UpstreamTaskID + "-similar")
+	similarID := task.PrivateData.UpstreamTaskID[:len(task.PrivateData.UpstreamTaskID)-5] + "abc13"
+	_, err = findModerationDiagnoseTask(similarID)
 	require.ErrorIs(t, err, errModerationDiagnoseTaskNotFound)
+}
+
+func TestFindModerationDiagnoseTaskRejectsInvalidCGTBeforeDatabaseQuery(t *testing.T) {
+	testCases := []struct {
+		name      string
+		taskID    string
+		errorText string
+	}{
+		{
+			name:      "malformed",
+			taskID:    "cgt-not-valid",
+			errorText: "BP task ID must match cgt-YYYYMMDDHHMMSS-xxxxx",
+		},
+		{
+			name:      "invalid timestamp",
+			taskID:    "cgt-20261340000000-abc12",
+			errorText: "BP task ID must match cgt-YYYYMMDDHHMMSS-xxxxx",
+		},
+		{
+			name:      "older than fourteen days",
+			taskID:    moderationTestCGTID(time.Now().Add(-15*24*time.Hour), "old12"),
+			errorText: "BP task ID is outside the 14-day moderation lookup window",
+		},
+		{
+			name:      "too far in future",
+			taskID:    moderationTestCGTID(time.Now().Add(3*time.Hour), "fut12"),
+			errorText: "BP task ID timestamp is too far in the future",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupModerationDiagnoseTestDB(t)
+			queryCount := 0
+			callbackName := "test:moderation-diagnose-query-count:" + strings.ReplaceAll(tc.name, " ", "-")
+			require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callbackName, func(_ *gorm.DB) {
+				queryCount++
+			}))
+			t.Cleanup(func() {
+				_ = model.DB.Callback().Query().Remove(callbackName)
+			})
+
+			task, err := findModerationDiagnoseTask(tc.taskID)
+
+			require.Nil(t, task)
+			require.EqualError(t, err, tc.errorText)
+			require.Zero(t, queryCount)
+		})
+	}
+}
+
+func TestFindModerationDiagnoseTaskValidMissingCGTReturnsNotFound(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+	queryCount := 0
+	callbackName := "test:moderation-diagnose-valid-missing-query-count"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callbackName, func(_ *gorm.DB) {
+		queryCount++
+	}))
+	t.Cleanup(func() {
+		_ = model.DB.Callback().Query().Remove(callbackName)
+	})
+
+	task, err := findModerationDiagnoseTask(moderationTestCGTID(time.Now(), "none1"))
+
+	require.Nil(t, task)
+	require.ErrorIs(t, err, errModerationDiagnoseTaskNotFound)
+	require.Equal(t, 1, queryCount)
 }
 
 func TestFindModerationDiagnoseTaskDoesNotFallbackNumericInputToPublicTaskID(t *testing.T) {
@@ -212,7 +286,7 @@ func TestResolveModerationVideoTaskTargetKeepsStoredOwnership(t *testing.T) {
 	require.Equal(t, videoChannel.Id, target.Tenant.VideoChannelID)
 	require.Equal(t, "project-a", target.Tenant.VideoProjectName)
 	require.Zero(t, target.ManualCredentialChannelID)
-	require.Equal(t, "cgt-fixture-123", target.Queries[0].ID)
+	require.Equal(t, task.PrivateData.UpstreamTaskID, target.Queries[0].ID)
 	require.NotContains(t, target.Resolved, "channel_id")
 	require.NotContains(t, target.Resolved, "group")
 	require.NotContains(t, target.Resolved, "project_name")
@@ -221,20 +295,22 @@ func TestResolveModerationVideoTaskTargetKeepsStoredOwnership(t *testing.T) {
 func TestResolveModerationVideoTaskTargetUsesStoredUpstreamIDBeforeTaskData(t *testing.T) {
 	setupModerationDiagnoseTestDB(t)
 	videoChannel := createModerationChannel(t, "video-bearer-placeholder", "tenant-a", "tenant-video-alias", "project-a", 10)
+	privateTaskID := moderationTestCGTID(time.Now(), "pri12")
+	dataTaskID := moderationTestCGTID(time.Now(), "dat12")
 	task := createModerationDiagnoseTask(
 		t,
 		"task_private_wins",
 		videoChannel.Id,
 		"tenant-a",
-		"cgt-private",
-		map[string]any{"id": "cgt-data", "request_id": "request-from-data"},
+		privateTaskID,
+		map[string]any{"id": dataTaskID, "request_id": "request-from-data"},
 	)
 
 	target, err := resolveModerationVideoTaskTarget(task.TaskID)
 
 	require.NoError(t, err)
 	require.Equal(t, []moderationDiagnoseQuery{
-		{ID: "cgt-private", Type: moderationDiagnoseTypeTaskID},
+		{ID: privateTaskID, Type: moderationDiagnoseTypeTaskID},
 		{ID: "request-from-data", Type: moderationDiagnoseTypeRequestID},
 	}, target.Queries)
 }
@@ -441,7 +517,7 @@ func TestResolveModerationManualUnknownTaskRequiresCredential(t *testing.T) {
 
 	_, err := resolveModerationTarget(moderationDiagnoseRequest{
 		SourceType: moderationDiagnoseSourceManual,
-		ID:         "cgt-not-persisted",
+		ID:         moderationTestCGTID(time.Now(), "none2"),
 		Type:       moderationDiagnoseTypeTaskID,
 	})
 
@@ -616,6 +692,19 @@ func TestRunModerationDiagnoseValidationStatus(t *testing.T) {
 
 	require.Error(t, err)
 	require.Equal(t, moderationDiagnoseResultValidationError, response.ResultStatus)
+}
+
+func TestRunModerationDiagnoseMalformedCGTReturnsValidationStatus(t *testing.T) {
+	setupModerationDiagnoseTestDB(t)
+
+	response, err := runModerationDiagnose(newModerationDiagnoseTestContext(), moderationDiagnoseRequest{
+		SourceType: moderationDiagnoseSourceVideoTask,
+		RecordID:   "cgt-malformed",
+	})
+
+	require.EqualError(t, err, "BP task ID must match cgt-YYYYMMDDHHMMSS-xxxxx")
+	require.Equal(t, moderationDiagnoseResultValidationError, response.ResultStatus)
+	require.Empty(t, response.AttemptedQueries)
 }
 
 func TestListModerationCredentialChannelsFiltersUnsafeChannels(t *testing.T) {
