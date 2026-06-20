@@ -1,16 +1,21 @@
-# Seedance Moderation Diagnose Production Candidate RC3
+# Seedance Moderation Diagnose Production Release RC3
 
 Date: 2026-06-20
-Status: local production candidate; not deployed
-Candidate image: `new-api:seedance-moderation-rc3`
+Status: deployed to production
+Production deployed: yes
+Production image: `new-api:seedance-moderation-rc3`
+Production image ID: `sha256:429fbd05318ffafd4a44c5262e8ad7ab29320356d24ea33e9345d40421f29a59`
+Source revision: `24c844439fdfd7b7975ed8120a43907e2895cdac`
 Release branch: `release/seedance-moderation-v1`
-Candidate runtime code commit: `d11c6f7f`
+Runtime code commit: `d11c6f7f`
 
-## Production Baseline
+## Previous Production Baseline and Rollback
 
-- Production image record: `new-api:seedance-p1-client-request-rc2`
+- Previous production image: `new-api:seedance-p1-client-request-rc2`
+- Previous production image ID: `sha256:a90396cab71ce41f62e729868edfb64d8f010cb3ced27d696778f271563ba680`
 - Runtime code commit: `d0bc8c18f1198437f91417de3293b5b03256118a`
-- Current production remains unchanged.
+- Retained rollback container:
+  `new-api-nightly-before-seedance-moderation-rc3-20260620115426`
 
 The release comparison remains fixed to the production runtime commit above.
 Feature branches, historical rc5 heads, RC1, and RC2 are not production
@@ -74,7 +79,7 @@ USE TEMP B-TREE FOR ORDER BY
 
 It does not contain an unindexed `SCAN tasks`.
 
-The RC2 MySQL preflight evidence showed:
+The MySQL preflight and pre-switch read-only evidence showed:
 
 ```text
 type=range
@@ -82,13 +87,13 @@ key=idx_tasks_created_at
 rows=1
 ```
 
-That evidence confirms the query shape can use the existing index, but RC3
-still requires a fresh preflight `EXPLAIN` with the corrected UTC+8-derived
-range before production approval.
+The `idx_tasks_created_at` index was present and the corrected UTC+8-derived
+lookup used the narrow indexed range. RC3 introduced no schema change or
+manual migration.
 
-## Required MySQL Preflight Verification
+## Completed MySQL Release Verification
 
-Before production approval, the isolated MySQL preflight must verify:
+Before production approval, the isolated MySQL preflight verified:
 
 ```sql
 SHOW INDEX FROM tasks WHERE Key_name = 'idx_tasks_created_at';
@@ -107,8 +112,44 @@ ORDER BY id ASC
 LIMIT 2;
 ```
 
-The plan must select `idx_tasks_created_at` and use the corrected narrow range.
-Do not record real task IDs, credentials, or `private_data`.
+The plan selected `idx_tasks_created_at` and used the corrected narrow range.
+The production database baseline remained MySQL. The rollout did not
+intentionally modify production data or run a manual migration.
+
+## Production Deployment
+
+Production was switched to RC3 on 2026-06-20 with the previous RC2 container
+retained for rollback.
+
+Deployment identity:
+
+- image: `new-api:seedance-moderation-rc3`;
+- image ID:
+  `sha256:429fbd05318ffafd4a44c5262e8ad7ab29320356d24ea33e9345d40421f29a59`;
+- source revision:
+  `24c844439fdfd7b7975ed8120a43907e2895cdac`;
+- restart count after the 30-second health gate: `0`.
+
+Rollback and backup assets:
+
+- rollback container:
+  `new-api-nightly-before-seedance-moderation-rc3-20260620115426`;
+- backup path:
+  `/root/prod-release-backup-seedance-moderation-rc3-20260620113754`;
+- MySQL logical backup: `production-mysql-20260620113754.sql.gz`;
+- MySQL backup SHA256:
+  `96842857dde80e70f502373609551dd6851170895146dab2e775046168b17991`;
+- backup SHA256 and gzip validation passed before the switch.
+
+Post-switch checks:
+
+- local `/api/status`: HTTP 200;
+- container-internal `/api/status`: OK;
+- public `/api/status`: HTTP 200;
+- unauthenticated Moderation Diagnose route: HTTP 401;
+- panic, fatal, database, SQLite, full-scan, and secret-value log scans: clean;
+- no customer token or successful production diagnose request was used;
+- no video generation request was submitted.
 
 ## Moderation-only Scope
 
@@ -121,6 +162,10 @@ Relative to RC2, RC3 changes only:
 No customer-facing API, route, middleware chain, Asset Library behavior,
 task creation, task polling, billing settlement, or customer documentation is
 changed.
+
+Customer documentation remained unchanged. Seedance Mini billing stayed
+excluded, and billing/customer API paths remained unchanged from the previous
+production baseline.
 
 ## Billing Exclusions and Blob Closure
 
@@ -142,21 +187,22 @@ RC3 does not contain:
 - Mini billing tests, configuration, or customer documentation;
 - the values `0.0035` or `0.0021` outside this explicit exclusion record.
 
-## Required Local Verification
+## Completed Release Verification
 
-Before RC3 handoff:
+Before RC3 handoff, the release process:
 
-- run the complete Moderation, task model, middleware, and Seedance billing
+- ran the complete Moderation, task model, middleware, and Seedance billing
   test suites;
-- repeat the Seedance billing tests 20 times;
-- verify the SQLite schema index and `EXPLAIN QUERY PLAN`;
-- run the seven Moderation frontend tests and targeted Prettier check;
-- complete a clean Dockerfile Bun/Vite production build;
-- compare protected billing and customer-path blobs to the production baseline;
-- scan the release diff for sensitive information;
-- push a clean release HEAD;
-- build the linux/amd64 RC3 image with OCI revision, version, and creation
-  labels and verify the labels against the pushed release HEAD.
+- repeated the Seedance billing tests 20 times;
+- verified the SQLite schema index and `EXPLAIN QUERY PLAN`;
+- ran the seven Moderation frontend tests and targeted Prettier check;
+- completed a clean Dockerfile Bun/Vite production build;
+- compared protected billing and customer-path blobs to the production baseline;
+- scanned the release diff for sensitive information;
+- pushed a clean release HEAD;
+- built the linux/amd64 RC3 image with OCI revision, version, and creation
+  labels and verified the labels against the pushed release HEAD.
 
-No server connection, preflight deployment, production deployment, or
-production modification is authorized by this record.
+This post-release record update is docs-only. It does not authorize a new
+server connection, production change, database change, or customer
+documentation update.
