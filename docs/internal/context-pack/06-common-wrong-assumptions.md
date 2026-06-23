@@ -28,13 +28,33 @@ Wrong: it is safe to wrap BytePlus HTTP calls in DB transactions.
 
 Correct: never put long upstream network I/O inside DB transactions.
 
-Wrong: ProjectName can be accepted from customer request body.
+Wrong: provider project name can be accepted from customer request body.
 
-Correct: ProjectName is server-side only and must not be customer-controlled.
+Correct: provider project identity is server-side only and must not be customer-controlled.
 
 Wrong: production, preflight, image, or DB facts can be answered from memory.
 
 Correct: verify with read-only commands and current docs.
+
+Wrong: `relay/channel/task/doubao` means the current LSF Seedance upstream model ID is a Doubao model.
+
+Correct: `doubao` is inherited new-api adapter/package naming. Seedance routing is tenant alias -> new-api model redirection -> BytePlus ModelArk endpoint `ep-*` -> Dreamina Seedance model family. Do not infer real upstream model IDs from package paths.
+
+Wrong: `dreamina-seedance-*` must be the direct new-api channel mapping gate.
+
+Correct: for the LSF Seedance preflight route, the direct new-api mapping gate is the tenant alias to endpoint route. `dreamina-seedance-*` describes the endpoint-backed model family, not the direct channel mapping target.
+
+Wrong: preflight task failures can depend on a human copying UI details later.
+
+Correct: preflight scripts must automatically collect sanitized `fail_reason` evidence for failed tasks. Sanitized output may include code, type, parameter, and message; it must not include provider task IDs, raw request bodies, provider URLs, credentials, or customer data.
+
+Wrong: remote runbooks can safely leave `<...>` placeholders or hide multiple checks inside nested SSH and SQL quote chains.
+
+Correct: remote runbooks should be executable as written for the approved environment, avoid unresolved placeholders, avoid fragile nested quoting gates, and report per-gate exit codes with sanitized stderr summaries.
+
+Wrong: a Fast reject must always use a nested OpenAI-style error object to pass preflight.
+
+Correct: the task API may return `invalid_request_error` as a top-level task error code. A Fast reject can pass with either nested or top-level error shape only when HTTP 400, no-task, and no-billing checks also pass.
 
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
