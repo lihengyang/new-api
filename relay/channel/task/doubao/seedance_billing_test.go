@@ -383,7 +383,25 @@ func TestResolveSeedanceIntlBillingAssetAdminNotMatched(t *testing.T) {
 	}
 }
 
-func TestResolveSeedanceIntlBillingUpstreamModelNameMatched(t *testing.T) {
+func TestResolveSeedanceIntlBillingDreaminaFastUpstreamModelMatched(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-fast-henrytest",
+		"dreamina-seedance-2-0-fast-260128",
+		videoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected upstream model name to match Seedance billing")
+	}
+	if ctx.Family != seedanceBillingFamilyFast {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
+}
+
+func TestResolveSeedanceIntlBillingLegacyDoubaoFastUpstreamModelMatched(t *testing.T) {
 	ctx, ok, err := ResolveSeedanceIntlBilling(
 		"custom-customer-alias",
 		"doubao-seedance-2-0-fast-260128",
@@ -393,7 +411,7 @@ func TestResolveSeedanceIntlBillingUpstreamModelNameMatched(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !ok {
-		t.Fatal("expected upstream model name to match Seedance billing")
+		t.Fatal("expected legacy upstream model name to match Seedance billing")
 	}
 	if ctx.Family != seedanceBillingFamilyFast {
 		t.Fatalf("family = %s", ctx.Family)

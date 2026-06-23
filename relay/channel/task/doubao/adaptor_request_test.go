@@ -89,9 +89,9 @@ func TestTaskAdaptorValidateMappedRequestRejectsFastHighResolution(t *testing.T)
 				},
 			})
 			info := &relaycommon.RelayInfo{
-				OriginModelName: "opaque-tenant-alias",
+				OriginModelName: "lsf-seedance-2.0-fast-henrytest",
 				ChannelMeta: &relaycommon.ChannelMeta{
-					UpstreamModelName: "doubao-seedance-2-0-fast-260128",
+					UpstreamModelName: "dreamina-seedance-2-0-fast-260128",
 				},
 			}
 
@@ -103,6 +103,7 @@ func TestTaskAdaptorValidateMappedRequestRejectsFastHighResolution(t *testing.T)
 	}
 }
 
-func TestTaskAdaptorModelListIncludesDreaminaSeedance20Standard(t *testing.T) {
+func TestTaskAdaptorModelListIncludesDreaminaSeedance20Models(t *testing.T) {
 	require.Contains(t, (&TaskAdaptor{}).GetModelList(), "dreamina-seedance-2-0-260128")
+	require.Contains(t, (&TaskAdaptor{}).GetModelList(), "dreamina-seedance-2-0-fast-260128")
 }

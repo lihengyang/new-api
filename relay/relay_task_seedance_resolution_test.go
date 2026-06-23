@@ -11,12 +11,12 @@ func TestRelayTaskSubmitRejectsMappedFastHighResolutionBeforeBilling(t *testing.
 	for _, resolution := range []string{"1080p", "4k"} {
 		t.Run(resolution, func(t *testing.T) {
 			body := fmt.Sprintf(
-				`{"prompt":"hello","model":"opaque-fast-alias","metadata":{"resolution":%q}}`,
+				`{"prompt":"hello","model":"lsf-seedance-2.0-fast-henrytest","metadata":{"resolution":%q}}`,
 				resolution,
 			)
 			c, info := newTaskClientRequestIDContext(t, body)
-			info.OriginModelName = "opaque-fast-alias"
-			c.Set("model_mapping", `{"opaque-fast-alias":"doubao-seedance-2-0-fast-260128"}`)
+			info.OriginModelName = "lsf-seedance-2.0-fast-henrytest"
+			c.Set("model_mapping", `{"lsf-seedance-2.0-fast-henrytest":"dreamina-seedance-2-0-fast-260128"}`)
 
 			result, taskErr := RelayTaskSubmit(c, info)
 
