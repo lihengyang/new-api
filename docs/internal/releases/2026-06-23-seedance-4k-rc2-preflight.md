@@ -2,7 +2,7 @@
 
 Date: 2026-06-23
 Status: `RC2_PREFLIGHT_PASSED`
-Production deployed: no
+Production follow-up: `PRODUCTION_DEPLOY_PASSED` on 2026-06-23
 Customer documentation changed: no
 
 ## Candidate Identity
@@ -114,17 +114,19 @@ Remote execution:
   secret-safe mechanism, and must not print the DSN, host, username, or
   password.
 
-## Production Boundary
+## Production Follow-up
 
-This record does not approve production deployment.
+This preflight record did not approve production deployment by itself. After
+separate Henry approval, RC2 was deployed to production and passed the
+production release gates. See
+`docs/internal/releases/2026-06-23-seedance-4k-rc2-production.md`.
 
-Before any production action, a separate production runbook and explicit Henry
-approval are required. Production follow-up must:
+The production follow-up:
 
-- operate only the approved production container;
-- preserve the previous image and rollback container;
-- verify current production image, MySQL gate, schema gate, backup or rollback
-  plan, tenant routing, health, restart count, and error count;
-- avoid Mini enablement unless separately approved;
-- avoid customer documentation updates unless separately approved;
-- keep all output sanitized.
+- operated only the approved production container, `new-api-nightly`;
+- preserved the previous image and rollback container;
+- verified current production image, MySQL gate, schema gate, tenant routing,
+  health, restart count, and error count;
+- did not enable Mini;
+- did not update customer documentation;
+- kept output sanitized.

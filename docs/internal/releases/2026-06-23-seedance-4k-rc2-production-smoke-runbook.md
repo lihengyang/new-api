@@ -1,14 +1,40 @@
 # Seedance 2.0 4K RC2 Production Smoke Runbook
 
 Date: 2026-06-23
-Status: prepared, not executed
-Production deployed: no
+Status: `PRODUCTION_DEPLOY_PASSED`
+Production deployed: yes
 Customer documentation changed: no
 
-This is an internal production deployment and smoke-test runbook for the
-Seedance 2.0 4K RC2 candidate. It does not approve production deployment by
-itself. Do not execute any production step until Henry gives explicit
-production approval in the same operational context.
+This internal production deployment and smoke-test runbook records the
+Seedance 2.0 4K RC2 production release after separate Henry approval.
+
+## Production Outcome
+
+RC2 production deployment passed on 2026-06-23.
+
+- Production container: `new-api-nightly`;
+- current production image: `new-api:seedance-4k-rc2`;
+- image ID:
+  `sha256:25488855505bd222069ebc3ccb63d525f7302b53fa42ceaa403b28dcb9e3273b`;
+- code / OCI revision: `49a45ebfbe95681c8fd95d253bcb03e92e740b19`;
+- previous image: `new-api:seedance-moderation-rc3`;
+- previous image ID:
+  `sha256:429fbd05318ffafd4a44c5262e8ad7ab29320356d24ea33e9345d40421f29a59`;
+- preserved rollback container:
+  `new-api-nightly-before-seedance-4k-rc2-redeploy-20260623T110257Z`;
+- `/api/status`: OK;
+- restart count: `0`;
+- sanitized error pattern count: `0`;
+- MySQL gate: passed;
+- schema gate: passed;
+- alias-to-endpoint route gate: passed;
+- token `henrytest` gate: passed;
+- Fast 4K reject: HTTP 400 `invalid_request_error`, no task, no billing, no
+  upstream-call evidence;
+- rollback happened: no.
+
+The deployment used the same preflight-validated RC2 artifact and was not
+rebuilt from docs-only HEAD `5f3c8071f066e05169fbd163d0b0c7eeafb42822`.
 
 ## Artifact Rule
 
@@ -20,7 +46,9 @@ Use the exact preflight-passed RC2 artifact where possible:
 - OCI revision: `49a45ebfbe95681c8fd95d253bcb03e92e740b19`;
 - source revision: `49a45ebfbe95681c8fd95d253bcb03e92e740b19`.
 
-Do not rebuild from docs-only HEAD `20581712cf40c93f4b7a80be626a72253bb45fcb`.
+Do not rebuild from any docs-only HEAD, including
+`20581712cf40c93f4b7a80be626a72253bb45fcb` or
+`5f3c8071f066e05169fbd163d0b0c7eeafb42822`.
 If production uses a rebuilt image instead of the preflighted RC2 image, that
 rebuilt image is a new artifact and requires separate provenance validation.
 Prefer exact RC2 tar/image transfer.

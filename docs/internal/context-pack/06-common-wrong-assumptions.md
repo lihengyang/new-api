@@ -56,6 +56,13 @@ Wrong: a Fast reject must always use a nested OpenAI-style error object to pass 
 
 Correct: the task API may return `invalid_request_error` as a top-level task error code. A Fast reject can pass with either nested or top-level error shape only when HTTP 400, no-task, and no-billing checks also pass.
 
+Wrong: `tasks.quota` is the final billing amount for a successful async video task.
+
+Correct: `tasks.quota` is precharge or reservation evidence. Final billing for
+terminal successful async video tasks must be reconciled from settlement logs,
+`actual_quota`, and final net quota, then checked against the expected effective
+upstream price.
+
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.
