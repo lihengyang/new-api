@@ -125,10 +125,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 
-	if _, ok, err := ResolveSeedanceIntlBilling(req.Model, info.OriginModelName, req.Metadata); ok && err != nil {
+	return validateSeedanceRequestResolution(req, req.Model, info.OriginModelName)
+}
+
+// ValidateMappedRequest enforces model-specific resolution constraints after
+// tenant aliases have been resolved to the final upstream model.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	return validateSeedanceRequestResolution(req, info.OriginModelName, info.UpstreamModelName)
+}
+
+func validateSeedanceRequestResolution(req relaycommon.TaskSubmitReq, originModelName, upstreamModelName string) *dto.TaskError {
+	if _, ok, err := ResolveSeedanceIntlBilling(originModelName, upstreamModelName, req.Metadata); ok && err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request_error", http.StatusBadRequest)
 	}
-
 	return nil
 }
 
@@ -147,7 +160,7 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 
 // EstimateBilling returns Seedance 2.0 international billing ratios.
 // For Seedance 2.0 models, ModelRatio should be configured as the no-video
-// 480p/720p base price. This resolver then applies video-input and 1080p
+// 480p/720p base price. This resolver then applies video-input and resolution
 // adjustments using BytePlus international pricing.
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
@@ -211,6 +224,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	body, err := a.convertToRequestPayload(&req)
 	if err != nil {
 		return nil, errors.Wrap(err, "convert request payload failed")
+	}
+	if billingCtx, ok, err := ResolveSeedanceIntlBilling(info.OriginModelName, info.UpstreamModelName, req.Metadata); ok {
+		if err != nil {
+			return nil, err
+		}
+		if metadataString(req.Metadata, "resolution") != "" {
+			body.Resolution = billingCtx.Resolution
+		}
 	}
 	if info.IsModelMapped {
 		body.Model = info.UpstreamModelName

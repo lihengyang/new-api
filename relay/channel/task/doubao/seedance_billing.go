@@ -11,11 +11,12 @@ const (
 
 	seedanceBillingResolution480p720p = "480p_720p"
 	seedanceBillingResolution1080p    = "1080p"
+	seedanceBillingResolution4K       = "4k"
 
 	seedanceBillingInputVideo   = "video_input"
 	seedanceBillingInputNoVideo = "no_video_input"
 
-	seedanceBillingRuleVersion = "byteplus_seedance_2_0_intl_2026_04"
+	seedanceBillingRuleVersion = "byteplus_seedance_2_0_intl_2026_06_4k"
 )
 
 type SeedanceBillingContext struct {
@@ -70,6 +71,20 @@ var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 		Ratio:            0.0047 / 0.0070,
 	},
 	{
+		Family:           seedanceBillingFamilyStandard,
+		HasVideoInput:    false,
+		ResolutionGroup:  seedanceBillingResolution4K,
+		UnitPriceUsdPerK: 0.0040,
+		Ratio:            0.0040 / 0.0070,
+	},
+	{
+		Family:           seedanceBillingFamilyStandard,
+		HasVideoInput:    true,
+		ResolutionGroup:  seedanceBillingResolution4K,
+		UnitPriceUsdPerK: 0.0024,
+		Ratio:            0.0024 / 0.0070,
+	},
+	{
 		Family:           seedanceBillingFamilyFast,
 		HasVideoInput:    false,
 		ResolutionGroup:  seedanceBillingResolution480p720p,
@@ -85,10 +100,10 @@ var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 	},
 }
 
-// resolveSeedanceBillingFamily recognizes Seedance 2.0 video-generation models
-// from either customer-facing aliases or upstream Doubao model names.
+// resolveSeedanceBillingFamily recognizes released Seedance 2.0 video-generation
+// models from either customer-facing aliases or upstream provider model names.
 // It deliberately does not match seedance-virtual-asset-admin or
-// seedance-real-human-asset-admin.
+// seedance-real-human-asset-admin, and does not classify Mini as standard.
 func resolveSeedanceBillingFamily(modelNames ...string) string {
 	for _, modelName := range modelNames {
 		normalized := strings.ToLower(strings.TrimSpace(modelName))
@@ -101,8 +116,11 @@ func resolveSeedanceBillingFamily(modelNames ...string) string {
 			return seedanceBillingFamilyFast
 		}
 
-		if strings.Contains(normalized, "seedance-2.0") ||
-			strings.Contains(normalized, "seedance-2-0") {
+		isSeedance20 := strings.Contains(normalized, "seedance-2.0") ||
+			strings.Contains(normalized, "seedance-2-0")
+		isMini := strings.Contains(normalized, "seedance-2.0-mini") ||
+			strings.Contains(normalized, "seedance-2-0-mini")
+		if isSeedance20 && !isMini {
 			return seedanceBillingFamilyStandard
 		}
 	}
@@ -126,8 +144,10 @@ func normalizeSeedanceBillingResolution(metadata map[string]interface{}) (resolu
 		return "720p", seedanceBillingResolution480p720p, nil
 	case "1080p", "1080":
 		return "1080p", seedanceBillingResolution1080p, nil
+	case "4k":
+		return "4k", seedanceBillingResolution4K, nil
 	default:
-		return "", "", fmt.Errorf("unsupported Seedance 2.0 resolution %q; supported values are 480p, 720p, and 1080p", raw)
+		return "", "", fmt.Errorf("unsupported Seedance 2.0 resolution %q; supported values are 480p, 720p, 1080p, and 4k", raw)
 	}
 }
 
@@ -173,8 +193,13 @@ func ResolveSeedanceIntlBilling(originModelName, upstreamModelName string, metad
 		return nil, true, err
 	}
 
-	if family == seedanceBillingFamilyFast && resolutionGroup == seedanceBillingResolution1080p {
-		return nil, true, fmt.Errorf("1080p is not supported for Dreamina Seedance 2.0 fast; please use 480p or 720p")
+	if family == seedanceBillingFamilyFast {
+		switch resolutionGroup {
+		case seedanceBillingResolution1080p:
+			return nil, true, fmt.Errorf("1080p is not supported for Dreamina Seedance 2.0 fast; please use 480p or 720p")
+		case seedanceBillingResolution4K:
+			return nil, true, fmt.Errorf("4k is not supported for Dreamina Seedance 2.0 fast; please use 480p or 720p")
+		}
 	}
 
 	hasVideoInput := hasVideoInMetadata(metadata)

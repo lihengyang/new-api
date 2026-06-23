@@ -36,6 +36,19 @@ func noVideoMetadata(resolution string) map[string]interface{} {
 	return metadata
 }
 
+func mediaMetadata(resolution, mediaType string) map[string]interface{} {
+	metadata := noVideoMetadata(resolution)
+	metadata["content"] = []interface{}{
+		map[string]interface{}{
+			"type": mediaType,
+			mediaType: map[string]interface{}{
+				"url": "https://example.com/input",
+			},
+		},
+	}
+	return metadata
+}
+
 func TestResolveSeedanceIntlBillingStandardNoVideo720p(t *testing.T) {
 	ctx, ok, err := ResolveSeedanceIntlBilling(
 		"lsf-seedance-2.0-aivision",
@@ -57,6 +70,7 @@ func TestResolveSeedanceIntlBillingStandardNoVideo720p(t *testing.T) {
 	if ctx.ResolutionGroup != seedanceBillingResolution480p720p {
 		t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0070)
 	assertRatio(t, ctx.Ratio, 1.0)
 }
 
@@ -75,6 +89,7 @@ func TestResolveSeedanceIntlBillingStandardVideo720p(t *testing.T) {
 	if ctx.InputType != seedanceBillingInputVideo {
 		t.Fatalf("input type = %s", ctx.InputType)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0043)
 	assertRatio(t, ctx.Ratio, 0.0043/0.0070)
 }
 
@@ -96,6 +111,7 @@ func TestResolveSeedanceIntlBillingStandardNoVideo480p(t *testing.T) {
 	if ctx.ResolutionGroup != seedanceBillingResolution480p720p {
 		t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0070)
 	assertRatio(t, ctx.Ratio, 1.0)
 }
 
@@ -117,6 +133,7 @@ func TestResolveSeedanceIntlBillingStandardVideo480p(t *testing.T) {
 	if ctx.InputType != seedanceBillingInputVideo {
 		t.Fatalf("input type = %s", ctx.InputType)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0043)
 	assertRatio(t, ctx.Ratio, 0.0043/0.0070)
 }
 
@@ -138,6 +155,7 @@ func TestResolveSeedanceIntlBillingFastNoVideo480p(t *testing.T) {
 	if ctx.Family != seedanceBillingFamilyFast {
 		t.Fatalf("family = %s", ctx.Family)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0056)
 	assertRatio(t, ctx.Ratio, 1.0)
 }
 
@@ -159,6 +177,7 @@ func TestResolveSeedanceIntlBillingFastVideo480p(t *testing.T) {
 	if ctx.InputType != seedanceBillingInputVideo {
 		t.Fatalf("input type = %s", ctx.InputType)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0033)
 	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
 }
 
@@ -177,6 +196,7 @@ func TestResolveSeedanceIntlBillingStandardNoVideo1080p(t *testing.T) {
 	if ctx.ResolutionGroup != seedanceBillingResolution1080p {
 		t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0077)
 	assertRatio(t, ctx.Ratio, 0.0077/0.0070)
 }
 
@@ -195,6 +215,7 @@ func TestResolveSeedanceIntlBillingStandardVideo1080p(t *testing.T) {
 	if ctx.InputType != seedanceBillingInputVideo {
 		t.Fatalf("input type = %s", ctx.InputType)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0047)
 	assertRatio(t, ctx.Ratio, 0.0047/0.0070)
 }
 
@@ -213,6 +234,7 @@ func TestResolveSeedanceIntlBillingFastNoVideo720p(t *testing.T) {
 	if ctx.Family != seedanceBillingFamilyFast {
 		t.Fatalf("family = %s", ctx.Family)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0056)
 	assertRatio(t, ctx.Ratio, 1.0)
 }
 
@@ -231,6 +253,7 @@ func TestResolveSeedanceIntlBillingFastVideo720p(t *testing.T) {
 	if ctx.InputType != seedanceBillingInputVideo {
 		t.Fatalf("input type = %s", ctx.InputType)
 	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0033)
 	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
 }
 
@@ -247,6 +270,89 @@ func TestResolveSeedanceIntlBillingFast1080pRejected(t *testing.T) {
 		t.Fatal("expected fast 1080p to be rejected")
 	}
 	if !strings.Contains(err.Error(), "1080p is not supported") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveSeedanceIntlBillingStandard4KPricing(t *testing.T) {
+	tests := []struct {
+		name              string
+		metadata          map[string]interface{}
+		expectedInputType string
+		expectedPrice     float64
+		expectedRatio     float64
+	}{
+		{
+			name:              "no video",
+			metadata:          noVideoMetadata("4k"),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0040,
+			expectedRatio:     0.0040 / 0.0070,
+		},
+		{
+			name:              "image only",
+			metadata:          mediaMetadata("4k", "image_url"),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0040,
+			expectedRatio:     0.0040 / 0.0070,
+		},
+		{
+			name:              "audio only",
+			metadata:          mediaMetadata("4k", "audio_url"),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0040,
+			expectedRatio:     0.0040 / 0.0070,
+		},
+		{
+			name:              "video",
+			metadata:          videoMetadata("4k"),
+			expectedInputType: seedanceBillingInputVideo,
+			expectedPrice:     0.0024,
+			expectedRatio:     0.0024 / 0.0070,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, ok, err := ResolveSeedanceIntlBilling(
+				"lsf-seedance-2.0-aivision",
+				"",
+				tt.metadata,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatal("expected Seedance billing to match")
+			}
+			if ctx.Resolution != "4k" {
+				t.Fatalf("resolution = %s", ctx.Resolution)
+			}
+			if ctx.ResolutionGroup != seedanceBillingResolution4K {
+				t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
+			}
+			if ctx.InputType != tt.expectedInputType {
+				t.Fatalf("input type = %s, want %s", ctx.InputType, tt.expectedInputType)
+			}
+			assertRatio(t, ctx.UnitPriceUsdPerK, tt.expectedPrice)
+			assertRatio(t, ctx.Ratio, tt.expectedRatio)
+		})
+	}
+}
+
+func TestResolveSeedanceIntlBillingFast4KRejected(t *testing.T) {
+	_, ok, err := ResolveSeedanceIntlBilling(
+		"lsf-seedance-2.0-fast-aivision",
+		"",
+		noVideoMetadata("4k"),
+	)
+	if !ok {
+		t.Fatal("expected Seedance billing to match")
+	}
+	if err == nil {
+		t.Fatal("expected fast 4k to be rejected")
+	}
+	if !strings.Contains(err.Error(), "4k is not supported") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -293,4 +399,22 @@ func TestResolveSeedanceIntlBillingUpstreamModelNameMatched(t *testing.T) {
 		t.Fatalf("family = %s", ctx.Family)
 	}
 	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
+}
+
+func TestResolveSeedanceIntlBillingDreaminaStandardUpstreamModelMatched(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"tenant-standard-alias",
+		"dreamina-seedance-2-0-260128",
+		noVideoMetadata("4k"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected upstream model name to match Seedance billing")
+	}
+	if ctx.Family != seedanceBillingFamilyStandard {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	assertRatio(t, ctx.Ratio, 0.0040/0.0070)
 }

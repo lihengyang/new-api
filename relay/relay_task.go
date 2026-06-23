@@ -188,6 +188,11 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
+	if validator, ok := adaptor.(channel.TaskMappedRequestValidator); ok {
+		if taskErr := validator.ValidateMappedRequest(c, info); taskErr != nil {
+			return nil, taskErr
+		}
+	}
 
 	// 3. 预生成公开 task ID（仅首次）
 	if info.PublicTaskID == "" {

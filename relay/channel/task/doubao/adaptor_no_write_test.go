@@ -98,3 +98,24 @@ func TestTaskAdaptorDoResponseWritesResponseAsBefore(t *testing.T) {
 	require.Equal(t, dto.VideoStatusQueued, video.Status)
 	require.NotZero(t, video.CreatedAt)
 }
+
+func TestTaskAdaptorDoResponseDoesNotExposeMappedUpstreamModel(t *testing.T) {
+	c, _ := newDoubaoResponseTestContext(t)
+	info := newDoubaoSubmitRelayInfo()
+	info.OriginModelName = "tenant-standard-alias"
+	info.ChannelMeta = &relaycommon.ChannelMeta{
+		UpstreamModelName: "dreamina-seedance-2-0-260128",
+		IsModelMapped:     true,
+	}
+
+	_, _, submitResponse, taskErr := (&TaskAdaptor{}).DoResponseNoWrite(c, newDoubaoSubmitHTTPResponse(), info)
+
+	require.Nil(t, taskErr)
+	video, ok := submitResponse.Body.(*dto.OpenAIVideo)
+	require.True(t, ok)
+	require.Equal(t, "tenant-standard-alias", video.Model)
+
+	marshaled, err := common.Marshal(video)
+	require.NoError(t, err)
+	require.NotContains(t, string(marshaled), "dreamina-seedance-2-0-260128")
+}

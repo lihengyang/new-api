@@ -78,6 +78,12 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+// TaskMappedRequestValidator validates request constraints that depend on the
+// final upstream model name after channel model mapping has been applied.
+type TaskMappedRequestValidator interface {
+	ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
+}
+
 type TaskSubmitResponse struct {
 	StatusCode int
 	Body       any
