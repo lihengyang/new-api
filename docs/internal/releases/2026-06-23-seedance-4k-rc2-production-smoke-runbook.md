@@ -206,11 +206,75 @@ The parser must still require all of the following:
 Do not treat a matching error shape as sufficient if any no-task, no-billing,
 or no-upstream-call gate fails.
 
+## Production Verifier Correction
+
+The first RC2 production deployment attempt verified the runtime behavior but
+rolled back because the smoke verifier treated `tasks.quota` as final billing.
+That rule is wrong for successful async video tasks.
+
+Use `docs/internal/releases/seedance-4k-rc2-production-verifier.sh` for any
+RC2 production smoke evidence review. The corrected verifier rules are:
+
+- `tasks.quota` is reservation or precharge evidence only;
+- terminal `SUCCESS` billing must be reconciled from settlement logs and final
+  net quota;
+- final billing passes when a settlement log exists, final net quota matches
+  the expected price, and the effective upstream price matches the expected
+  Standard 4K price;
+- if a task is terminal `SUCCESS` but settlement evidence is not available yet,
+  classify it as `billing_settlement_pending` and use bounded waits instead of
+  immediately failing deployment;
+- Fast reject passes only when HTTP 400, an accepted `invalid_request_error`
+  shape, no task, no billing log, and no upstream-call evidence all pass.
+
+The verifier output must stay sanitized and include only:
+
+- task reference hash;
+- client request ID;
+- terminal status and progress;
+- precharge from `tasks.quota`;
+- settlement actual quota and final net quota;
+- completion or total tokens;
+- group ratio and Seedance ratio;
+- effective upstream price;
+- expected price;
+- `price_match`.
+
+Do not report provider task IDs, provider URLs, raw request bodies, credentials,
+internal channel or group values, database connection details, or customer data.
+
+## Second Deployment Plan After Verifier Patch
+
+This section is a plan only. It does not authorize another production switch.
+Wait for Henry's explicit approval before operating `new-api-nightly`.
+
+Recommended second attempt:
+
+1. Confirm the current production container is the rollback image and healthy.
+2. Confirm the exact RC2 image is present:
+   `new-api:seedance-4k-rc2`,
+   `sha256:25488855505bd222069ebc3ccb63d525f7302b53fa42ceaa403b28dcb9e3273b`,
+   OCI revision `49a45ebfbe95681c8fd95d253bcb03e92e740b19`.
+3. Re-switch only `new-api-nightly` to the same RC2 image, preserving the
+   rollback container and image.
+4. Run production health, restart/error, MySQL, schema, alias route, and token
+   ability gates.
+5. Do not rerun paid Standard 4K no-video or `video_url` smoke tasks by
+   default, because the first production attempt already proved those request
+   behaviors and settlement prices.
+6. If Henry approves a no-cost smoke, run only Fast 4K reject and verify HTTP
+   400, accepted `invalid_request_error` shape, no task, no billing log, and no
+   upstream-call evidence.
+7. If Henry explicitly wants another paid Standard smoke, ask for that separate
+   approval before sending any new `/v1/videos` request.
+8. Use the corrected verifier for any existing smoke evidence or newly approved
+   smoke evidence.
+
 ## Remote Execution Hygiene
 
 Before production execution, convert this runbook into concrete private
 commands or scripts for the approved host and container. Executable commands
-must not contain unresolved `<...>` placeholders.
+must not contain unresolved angle-bracket placeholders.
 
 Rules:
 
