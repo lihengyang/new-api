@@ -1,7 +1,7 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `LOCAL_READY_FOR_IMAGE_BUILD`
+Status: `BLOCKED_PREFLIGHT_RUNTIME_NOT_FOUND`
 Production deployed: no
 Preflight deployed: no
 Customer documentation changed: no
@@ -16,9 +16,12 @@ publication, production smoke, or use of customer data.
 
 - Release branch: `release/seedance-mini-v1`
 - Local starting revision: `8736869ac22549588daebfff3a0db3b6971bb7f4`
-- Candidate commit: pending local commit
+- Runtime candidate commit: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`
 - Image tag: `new-api:seedance-mini-rc1`
-- Image built: no
+- Image built: yes
+- Image ID:
+  `sha256:420a29a4dac01fae8b13ca06c54dcc793e1422c90ee45279c68c24fcd6c6d50a`
+- OCI revision label: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`
 - Platform target: `linux/amd64`
 
 The candidate branch was created from the local LSF customized Seedance 4K and
@@ -48,9 +51,9 @@ Implemented locally:
 Excluded from this local pass:
 
 - Production deployment.
-- Preflight deployment or smoke tests, until the local commit and image build
-  gates complete.
-- Final Docker image build.
+- Preflight deployment or smoke tests. The local Docker contexts do not expose
+  a `new-api-preflight` container, port `3002` is not listening, and
+  `HENRYTEST_API_KEY` is absent in the current shell.
 - Customer guide v2.1.4 publication or addendum publication.
 - New public customer endpoints.
 - Asset Library scope expansion.
@@ -219,20 +222,54 @@ was rerun separately and passed.
 
 ## Tests Not Run
 
-- Docker build for `new-api:seedance-mini-rc1`: not run.
-- Final linux/amd64 Docker image build for `new-api:seedance-mini-rc1`: not
-  run yet.
 - Full `go test ./...` without a regex: not run.
 - MySQL integration tests: not run locally.
-- Preflight smoke tests using `henrytest`: not run.
+- Preflight smoke tests using `henrytest`: not run because the preflight
+  container/port is not present locally and `HENRYTEST_API_KEY` is absent.
 - Production smoke tests: not run.
+
+## Image Build
+
+Passed:
+
+```text
+docker build --platform linux/amd64 -t new-api:seedance-mini-rc1 \
+  --label org.opencontainers.image.revision=4262bb9a52a8fd67f339d830b87f9201ac8f7bec \
+  --label org.opencontainers.image.version=seedance-mini-rc1 \
+  --label org.opencontainers.image.created=2026-06-26T11:05:49Z .
+```
+
+Inspection:
+
+- Image tag: `new-api:seedance-mini-rc1`
+- Image ID:
+  `sha256:420a29a4dac01fae8b13ca06c54dcc793e1422c90ee45279c68c24fcd6c6d50a`
+- Platform: `linux/amd64`
+- Revision label: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`
+- Version label: `seedance-mini-rc1`
+
+The image was built from a clean worktree at the runtime candidate commit.
 
 ## Preflight Plan
 
 Preflight preparation is approved for this RC1, but production remains closed.
-Before updating `new-api-preflight`, the local commit, final linux/amd64 image
-build, dirty-tree check, and redacted current preflight-state backup evidence
-must complete.
+The preflight update is currently blocked before mutation because the current
+local Docker contexts do not contain `new-api-preflight` and
+`http://127.0.0.1:3002/api/status` returns no connection.
+
+Read-only preflight discovery performed:
+
+- Docker contexts checked: `desktop-linux`, `default`;
+- `new-api-preflight` container: not found;
+- local port `3002`: not listening;
+- local rollback image candidates present:
+  - `new-api:seedance-4k-rc2`;
+  - `new-api:seedance-moderation-rc3`;
+- `HENRYTEST_API_KEY`: absent; no token value was printed.
+
+No preflight container, preflight DB, preflight env, preflight logs, preflight
+smoke, production container, production DB, production env, or production logs
+were modified or queried beyond the local port check.
 
 Required preflight gates:
 
@@ -296,9 +333,13 @@ value, raw env, channel/group ID, or customer data was printed or committed.
 - No preflight evidence exists yet for Mini success, Mini rejection no-task
   proof, MySQL runtime behavior, route configuration, token ability, or final
   settlement.
-- No image has been built.
 - `web/dist` was generated locally through the Dockerfile Bun builder because
   the host shell does not currently provide `bun`.
+- The local Docker daemon does not currently expose the named preflight
+  container, so container status, MySQL proof, rollback container, and smoke
+  evidence could not be collected.
+- `HENRYTEST_API_KEY` is not set in the current shell, so no redacted smoke can
+  be run until Henry provides it through a secure environment variable.
 - The Mini reference-video duration is not read from remote media at submit
   time. RC1 uses a conservative 15s reference-input ceiling for reservation and
   requires final settlement evidence from upstream usage.
