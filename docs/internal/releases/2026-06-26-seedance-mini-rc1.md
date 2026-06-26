@@ -725,6 +725,89 @@ Production runtime remained healthy after the blocked smoke attempt:
 - `new-api-staging` was not modified;
 - customer documentation remained unpublished.
 
+## Production Smoke Retry After UI Fix
+
+Henry checked and adjusted the production `henrytest` token/UI configuration,
+then asked Codex to rerun only the balance gate before any video request.
+
+Token handling:
+
+- production `henrytest` key was read from macOS Keychain service
+  `lsf-production-henrytest-api-key`;
+- only `HENRYTEST_PROD_API_KEY present` was printed;
+- the token value was not printed, written to disk, committed, or recorded;
+- the variable was unset after the attempt.
+
+Retry run reference:
+
+- run reference: `9210d2b27d35`;
+- base URL: production public API;
+- previous paid-video state: no paid task was submitted in the earlier blocked
+  smoke attempt.
+
+Balance gate retry:
+
+```text
+billing_balance:
+  http=403
+  content_type=text/plain
+  body_is_json=false
+  body_length=17
+  body_category=non_json_error_body
+  structured_error_code=null
+  structured_error_type=null
+  safe_message=null
+  result=blocked
+```
+
+Because the balance gate still returned HTTP `403`, Codex stopped before all
+video requests. The following cases were not run in this retry:
+
+```text
+mini_1080p_reject:
+  result=not_run
+  reason=billing_balance_gate_blocked_before_video_requests
+
+mini_4k_reject:
+  result=not_run
+  reason=billing_balance_gate_blocked_before_video_requests
+
+mini_480p_novideo:
+  result=not_run
+  reason=billing_balance_gate_blocked_before_paid_task_submission
+
+mini_reference_video:
+  result=not_run
+  reason=not_explicitly_approved_for_extra_production_paid_task
+
+standard_4k_live_regression:
+  result=not_run
+  reason=accepted_risk_for_mini_rc1
+```
+
+No production Mini task was submitted in this retry. Therefore there is still no
+production Mini no-video reservation, final settlement, retrieve evidence, or
+rejection-before-task/billing/upstream evidence from production. The current
+production smoke blocker is:
+
+```text
+BLOCKED_PRODUCTION_HENRYTEST_AUTH_OR_CONFIG
+```
+
+Runtime health after the retry was verified separately without Authorization:
+
+- local `/api/status`: HTTP `200`;
+- public `/api/status`: HTTP `200`;
+- `new-api-nightly` remained on `new-api:seedance-mini-rc1`;
+- OCI revision label remained
+  `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`;
+- restart count remained `0`;
+- rollback container remained retained and stopped;
+- `new-api-preflight` was not modified;
+- `new-api-staging` was not modified;
+- rollback was not performed;
+- customer documentation remained unpublished.
+
 ## Rollback Plan
 
 Rollback requires explicit Henry approval unless the production switch fails
@@ -793,6 +876,12 @@ key IDs, AK/SK assignments, provider project assignments, or customer token
 values. Generic env-assignment hits were limited to historical `GOCACHE`
 commands and the documented Keychain command substitution variable name; no
 secret value was present.
+
+Post-retry changed-file sensitive scan remained clean for API-key-like values,
+bearer values, SQL DSN assignments, MySQL DSN strings, AWS-style access key
+IDs, AK/SK assignments, provider project assignments, and unexpected env
+assignments. The only env-assignment patterns were the historical `GOCACHE`
+commands and the documented Keychain command substitution variable name.
 
 No API key, SQL DSN, AK/SK value, customer bearer token, provider ProjectName
 value, raw env, channel/group ID, or customer data was printed or committed.
