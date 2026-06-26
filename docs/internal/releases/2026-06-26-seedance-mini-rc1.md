@@ -1,9 +1,9 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `BLOCKED_SSH_PASSWORD_SECRET_NOT_CONFIGURED`
+Status: `PREFLIGHT_RUNTIME_READY_CONFIG_PENDING`
 Production deployed: no
-Preflight deployed: no
+Preflight deployed: yes
 Customer documentation changed: no
 
 This is the internal release-preparation record for Seedance 2.0 Mini RC1.
@@ -51,10 +51,9 @@ Implemented locally:
 Excluded from this local pass:
 
 - Production deployment.
-- Preflight deployment or smoke tests. The preflight runtime is a server-side
-  Docker runtime, not Macmini Docker Desktop. Henry supplied the server target
-  for the next continuation pass, but non-interactive SSH could not authenticate
-  without a safely injected password secret or an available key/agent session.
+- Preflight smoke tests. The preflight runtime is a server-side Docker runtime,
+  not Macmini Docker Desktop. The server runtime has been updated to Mini RC1
+  and is now waiting for Henry's manual preflight UI tenant configuration.
 - Customer guide v2.1.4 publication or addendum publication.
 - New public customer endpoints.
 - Asset Library scope expansion.
@@ -254,12 +253,13 @@ The continuation pass re-inspected the local Docker image and confirmed the
 same tag, image ID, `linux/amd64` platform, OCI revision label, and release
 version label.
 
-## Preflight Plan
+## Preflight Runtime Deployment
 
 Preflight preparation is approved for this RC1, but production remains closed.
-The preflight update is currently blocked before server mutation because the
-server target is now known, but the current execution environment does not have
-a safe non-interactive authentication path.
+The server preflight runtime has been updated to `new-api:seedance-mini-rc1`.
+Smoke tests are intentionally paused until Henry manually completes the
+preflight UI tenant/group/channel/token/model mapping and server-side project
+configuration.
 
 Continuation attempt before server target was supplied:
 
@@ -294,6 +294,43 @@ Continuation attempt after server target was supplied:
 - no remote `docker ps`, MySQL, log, env, container inspection, image load, or
   container update command executed.
 
+Continuation attempt after temporary SSH key authentication was supplied:
+
+- local hygiene passed again on branch `release/seedance-mini-v1` at
+  `38d08da70d9b9eaa271156464e6e36eec97ea995`;
+- `git status --short --branch` showed a clean branch before this documentation
+  update;
+- `git diff --stat` was empty before this documentation update;
+- `git diff --check` passed;
+- server access used the temporary SSH-key path supplied through secure
+  parameters; no root password or password automation path was used;
+- initial server container check found `new-api-preflight` plus production and
+  staging containers; production and staging were observed only and not
+  modified;
+- preflight MySQL gate passed with sanitized evidence:
+  - `DATABASE=MYSQL`;
+  - `SQL_DSN_SHAPE=MYSQL_REDACTED`;
+  - active remote `3306` connections were present;
+  - app log database initialization signal was present without printing logs;
+- the server did not already have `new-api:seedance-mini-rc1`, so the image was
+  transferred by temporary tarball, loaded, and the local and server temporary
+  tarballs were removed;
+- server image confirmation found `new-api:seedance-mini-rc1` with image ID
+  prefix `420a29a4dac0`, matching the local Mini RC1 image ID;
+- only `new-api-preflight` was updated;
+- rollback image: `new-api:seedance-4k-rc2`;
+- rollback container retained:
+  `new-api-preflight-before-seedance-mini-rc1-20260626T144621Z`;
+- updated preflight container:
+  - image: `new-api:seedance-mini-rc1`;
+  - restart policy: `unless-stopped`;
+  - restart count: `0`;
+  - port mapping: `3002 -> 3000`;
+  - `/api/status`: OK;
+  - precise sanitized failure-pattern count: `0`;
+- `new-api-nightly` production and `new-api-staging` staging were not modified;
+- no preflight smoke was run after the update.
+
 Earlier local-only discovery is retained as non-authoritative context. Macmini
 Docker Desktop is not the preflight runtime and must not be used as the blocker
 for server preflight readiness:
@@ -307,20 +344,18 @@ for server preflight readiness:
 - `HENRYTEST_API_KEY`: absent in the earlier local shell check; no token value
   was printed.
 
-No preflight container, preflight DB, preflight env, preflight logs, preflight
-smoke, staging container, production container, production DB, production env,
-or production logs were modified or queried in the continuation passes.
+No preflight env, raw preflight logs, preflight smoke, staging container,
+production container, production DB, production env, or production logs were
+modified or queried in the continuation passes.
 
-Required next server gate:
+Required next gate:
 
-- Henry provides a safe non-interactive authentication path without pasting
-  secrets into chat, for example a masked `PREFLIGHT_SSH_PASSWORD`/`SSHPASS`
-  with `sshpass -e`, or a working SSH key/agent/ControlMaster session;
-- Codex runs only non-sensitive server checks first:
-  `docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'`;
-- `new-api-preflight` must be found before any update;
-- `new-api-nightly` production and staging containers may be identified but
-  must not be touched.
+- Henry manually configures the Mini tenant-facing alias, group access, channel
+  support, upstream route, server-side project injection, and sufficient
+  balance/quota in the preflight UI;
+- Codex does not modify tenant/group/channel/token/customer configuration;
+- Codex resumes smoke only after Henry explicitly replies:
+  `预发 UI 配置完成，可以继续 smoke`.
 
 Required preflight gates:
 
@@ -381,15 +416,14 @@ value, raw env, channel/group ID, or customer data was printed or committed.
 
 ## Known Limitations
 
-- No preflight evidence exists yet for Mini success, Mini rejection no-task
-  proof, MySQL runtime behavior, route configuration, token ability, or final
-  settlement.
+- No preflight smoke evidence exists yet for Mini success, Mini rejection
+  no-task proof, route configuration, token ability, reservation, or final
+  settlement. MySQL runtime and startup evidence has been collected with
+  redaction.
 - `web/dist` was generated locally through the Dockerfile Bun builder because
   the host shell does not currently provide `bun`.
-- The server preflight target is supplied, but safe non-interactive SSH
-  authentication is not configured in the current environment, so server
-  container status, MySQL proof, rollback image, image load, and smoke evidence
-  could not be collected.
+- The server preflight runtime is updated and ready for Henry's manual UI
+  configuration. Smoke remains blocked by the required human configuration gate.
 - `HENRYTEST_API_KEY` still must be checked immediately before smoke with
   `test -n "${HENRYTEST_API_KEY:-}"`; no token value may be printed.
 - The Mini reference-video duration is not read from remote media at submit
