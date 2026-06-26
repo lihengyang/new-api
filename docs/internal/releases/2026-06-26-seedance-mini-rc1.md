@@ -1,7 +1,7 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `BLOCKED_PREFLIGHT_RUNTIME_NOT_FOUND`
+Status: `BLOCKED_SERVER_PREFLIGHT_TARGET_MISSING`
 Production deployed: no
 Preflight deployed: no
 Customer documentation changed: no
@@ -51,9 +51,11 @@ Implemented locally:
 Excluded from this local pass:
 
 - Production deployment.
-- Preflight deployment or smoke tests. The local Docker contexts do not expose
-  a `new-api-preflight` container, port `3002` is not listening, and
-  `HENRYTEST_API_KEY` is absent in the current shell.
+- Preflight deployment or smoke tests. The preflight runtime is a server-side
+  Docker runtime, not Macmini Docker Desktop. Server preflight discovery could
+  not start in the continuation pass because no `PREFLIGHT_SSH_TARGET` or
+  existing SSH alias was available from the checked runbook/release records or
+  readable local SSH configuration.
 - Customer guide v2.1.4 publication or addendum publication.
 - New public customer endpoints.
 - Asset Library scope expansion.
@@ -249,15 +251,35 @@ Inspection:
 - Version label: `seedance-mini-rc1`
 
 The image was built from a clean worktree at the runtime candidate commit.
+The continuation pass re-inspected the local Docker image and confirmed the
+same tag, image ID, `linux/amd64` platform, OCI revision label, and release
+version label.
 
 ## Preflight Plan
 
 Preflight preparation is approved for this RC1, but production remains closed.
-The preflight update is currently blocked before mutation because the current
-local Docker contexts do not contain `new-api-preflight` and
-`http://127.0.0.1:3002/api/status` returns no connection.
+The preflight update is currently blocked before server mutation because the
+server SSH target is not available in the current shell or checked runbook
+materials.
 
-Read-only preflight discovery performed:
+Current continuation attempt:
+
+- local hygiene passed on branch `release/seedance-mini-v1` at
+  `bc6808be9ec08ea8497bd0138a5a7a642c43a3e3`;
+- `git status --short --branch` showed a clean branch before this documentation
+  update;
+- `git diff --stat` was empty before this documentation update;
+- `git diff --check` passed;
+- `PREFLIGHT_SSH_TARGET` was absent in the current shell;
+- checked release runbook and prior release records did not provide a concrete
+  server SSH alias;
+- local SSH config was not readable or not present in this environment;
+- no server `docker ps`, MySQL, log, env, or container inspection command was
+  executed.
+
+Earlier local-only discovery is retained as non-authoritative context. Macmini
+Docker Desktop is not the preflight runtime and must not be used as the blocker
+for server preflight readiness:
 
 - Docker contexts checked: `desktop-linux`, `default`;
 - `new-api-preflight` container: not found;
@@ -265,11 +287,22 @@ Read-only preflight discovery performed:
 - local rollback image candidates present:
   - `new-api:seedance-4k-rc2`;
   - `new-api:seedance-moderation-rc3`;
-- `HENRYTEST_API_KEY`: absent; no token value was printed.
+- `HENRYTEST_API_KEY`: absent in the earlier local shell check; no token value
+  was printed.
 
 No preflight container, preflight DB, preflight env, preflight logs, preflight
-smoke, production container, production DB, production env, or production logs
-were modified or queried beyond the local port check.
+smoke, staging container, production container, production DB, production env,
+or production logs were modified or queried in the continuation pass.
+
+Required next server gate:
+
+- Henry provides a reachable preflight server SSH target, for example through
+  `PREFLIGHT_SSH_TARGET`, without pasting secrets into chat;
+- Codex runs only non-sensitive server checks first:
+  `docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'`;
+- `new-api-preflight` must be found before any update;
+- `new-api-nightly` production and staging containers may be identified but
+  must not be touched.
 
 Required preflight gates:
 
@@ -335,11 +368,11 @@ value, raw env, channel/group ID, or customer data was printed or committed.
   settlement.
 - `web/dist` was generated locally through the Dockerfile Bun builder because
   the host shell does not currently provide `bun`.
-- The local Docker daemon does not currently expose the named preflight
-  container, so container status, MySQL proof, rollback container, and smoke
-  evidence could not be collected.
-- `HENRYTEST_API_KEY` is not set in the current shell, so no redacted smoke can
-  be run until Henry provides it through a secure environment variable.
+- The server preflight SSH target is missing in the current shell, so server
+  container status, MySQL proof, rollback image, image load, and smoke evidence
+  could not be collected.
+- `HENRYTEST_API_KEY` still must be checked immediately before smoke with
+  `test -n "${HENRYTEST_API_KEY:-}"`; no token value may be printed.
 - The Mini reference-video duration is not read from remote media at submit
   time. RC1 uses a conservative 15s reference-input ceiling for reservation and
   requires final settlement evidence from upstream usage.
