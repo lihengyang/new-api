@@ -1,7 +1,7 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `BLOCKED_SERVER_PREFLIGHT_TARGET_MISSING`
+Status: `BLOCKED_SSH_PASSWORD_SECRET_NOT_CONFIGURED`
 Production deployed: no
 Preflight deployed: no
 Customer documentation changed: no
@@ -52,10 +52,9 @@ Excluded from this local pass:
 
 - Production deployment.
 - Preflight deployment or smoke tests. The preflight runtime is a server-side
-  Docker runtime, not Macmini Docker Desktop. Server preflight discovery could
-  not start in the continuation pass because no `PREFLIGHT_SSH_TARGET` or
-  existing SSH alias was available from the checked runbook/release records or
-  readable local SSH configuration.
+  Docker runtime, not Macmini Docker Desktop. Henry supplied the server target
+  for the next continuation pass, but non-interactive SSH could not authenticate
+  without a safely injected password secret or an available key/agent session.
 - Customer guide v2.1.4 publication or addendum publication.
 - New public customer endpoints.
 - Asset Library scope expansion.
@@ -259,10 +258,10 @@ version label.
 
 Preflight preparation is approved for this RC1, but production remains closed.
 The preflight update is currently blocked before server mutation because the
-server SSH target is not available in the current shell or checked runbook
-materials.
+server target is now known, but the current execution environment does not have
+a safe non-interactive authentication path.
 
-Current continuation attempt:
+Continuation attempt before server target was supplied:
 
 - local hygiene passed on branch `release/seedance-mini-v1` at
   `bc6808be9ec08ea8497bd0138a5a7a642c43a3e3`;
@@ -276,6 +275,24 @@ Current continuation attempt:
 - local SSH config was not readable or not present in this environment;
 - no server `docker ps`, MySQL, log, env, or container inspection command was
   executed.
+
+Continuation attempt after server target was supplied:
+
+- local hygiene passed again on branch `release/seedance-mini-v1` at
+  `3c11582b163ffda8af0bf4be5b6d0077d8524410`;
+- `git status --short --branch` showed a clean branch before this documentation
+  update;
+- `git diff --stat` was empty before this documentation update;
+- `git diff --check` passed;
+- server target was supplied for `PREFLIGHT_SSH_TARGET`; the raw target is not
+  repeated here;
+- `PREFLIGHT_SSH_PASSWORD` was absent in the current shell;
+- `SSHPASS` was absent in the current shell;
+- `sshpass` was not available in the current shell;
+- non-interactive `ssh -o BatchMode=yes` reached the server but failed
+  authentication;
+- no remote `docker ps`, MySQL, log, env, container inspection, image load, or
+  container update command executed.
 
 Earlier local-only discovery is retained as non-authoritative context. Macmini
 Docker Desktop is not the preflight runtime and must not be used as the blocker
@@ -292,12 +309,13 @@ for server preflight readiness:
 
 No preflight container, preflight DB, preflight env, preflight logs, preflight
 smoke, staging container, production container, production DB, production env,
-or production logs were modified or queried in the continuation pass.
+or production logs were modified or queried in the continuation passes.
 
 Required next server gate:
 
-- Henry provides a reachable preflight server SSH target, for example through
-  `PREFLIGHT_SSH_TARGET`, without pasting secrets into chat;
+- Henry provides a safe non-interactive authentication path without pasting
+  secrets into chat, for example a masked `PREFLIGHT_SSH_PASSWORD`/`SSHPASS`
+  with `sshpass -e`, or a working SSH key/agent/ControlMaster session;
 - Codex runs only non-sensitive server checks first:
   `docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'`;
 - `new-api-preflight` must be found before any update;
@@ -368,7 +386,8 @@ value, raw env, channel/group ID, or customer data was printed or committed.
   settlement.
 - `web/dist` was generated locally through the Dockerfile Bun builder because
   the host shell does not currently provide `bun`.
-- The server preflight SSH target is missing in the current shell, so server
+- The server preflight target is supplied, but safe non-interactive SSH
+  authentication is not configured in the current environment, so server
   container status, MySQL proof, rollback image, image load, and smoke evidence
   could not be collected.
 - `HENRYTEST_API_KEY` still must be checked immediately before smoke with
