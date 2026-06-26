@@ -63,6 +63,32 @@ terminal successful async video tasks must be reconciled from settlement logs,
 `actual_quota`, and final net quota, then checked against the expected effective
 upstream price.
 
+Wrong: a local production smoke HTTP 403 always means the production API or
+tenant token is broken.
+
+Correct: first isolate Keychain value, client transport, and tenant
+configuration. During Mini RC1, Henry verified the same key through the public
+endpoint while one Codex Python client path still saw HTTP 403; curl with
+Authorization supplied through stdin config passed the balance gate.
+
+Wrong: passing Mini no-video production smoke authorizes additional paid
+production video tasks.
+
+Correct: each extra paid production smoke case, including Mini
+`reference_video` and live Standard 4K reruns, needs separate Henry approval.
+
+Wrong: a successful release means the rollback artifact can be cleaned up
+immediately.
+
+Correct: preserve the recorded rollback artifact through the observation window
+unless Henry explicitly approves retiring it.
+
+Wrong: internal release evidence means customer Mini docs are ready to publish.
+
+Correct: keep customer docs unpublished until Henry separately approves
+publication, and keep them free of internal routing, credentials, ProjectName,
+channel/group identifiers, DB fields, and billing internals.
+
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.

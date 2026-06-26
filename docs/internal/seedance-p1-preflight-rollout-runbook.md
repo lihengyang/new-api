@@ -286,3 +286,36 @@ Customer docs should only mention:
 - optional `metadata.client_request_id`
 
 Do not mention reservation, `token_id`, DB schema, ProjectName, channels, groups, upstream model names, billing internals, or production paths.
+
+## Post-Release Operational Lessons
+
+The 2026-06-26 Seedance 2.0 Mini RC1 production release adds these operational
+lessons for future Seedance rollouts:
+
+- Treat post-release documentation updates as documentation-only unless Henry
+  separately approves runtime changes, paid smoke, production rollback, push, or
+  customer publication.
+- Preserve the recorded rollback artifact through the observation window. Do
+  not retire it just because production smoke passed.
+- Do not run additional paid production video smoke after the release pass
+  unless Henry explicitly approves the added task and scope.
+- Keep customer Mini documentation unpublished until Henry separately approves
+  publication.
+- For Keychain-backed production smoke, read the key only into a temporary
+  shell variable, print only a presence marker, and unset the variable after the
+  attempt.
+- Avoid client transports that make bearer handling ambiguous. Mini RC1 passed
+  the production balance gate with curl using Authorization supplied through
+  stdin config after a Python client path returned HTTP 403 with the same
+  Keychain value.
+- A production balance/auth 403 is not a rollback reason by itself when
+  runtime health, restart count, image/revision, and public status remain
+  healthy. First distinguish Keychain, local client transport, and tenant UI
+  configuration from runtime failure.
+- Rejection evidence must prove no task creation, no billing reservation, and
+  no upstream call. A 400 response alone is not enough.
+- Final async billing evidence must come from settlement logs, `actual_quota`,
+  net quota change, upstream usage tokens, or another confirmed final billing
+  field. `tasks.quota` is reservation evidence only.
+- Mini `reference_video` and live Standard 4K production reruns are separate
+  paid tasks and remain out of scope unless Henry explicitly approves them.

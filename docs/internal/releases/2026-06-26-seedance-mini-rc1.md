@@ -965,6 +965,34 @@ Customer documentation must not include the upstream Mini model ID, endpoint
 ID, provider project name, credentials, channel/group names or IDs, raw DB
 fields, raw upstream responses, internal ratios, or Moderation Diagnose.
 
+## Post-Release Operational Lessons
+
+The Mini RC1 production deployment and smoke pass added these operating
+lessons for future Seedance releases:
+
+- Post-release knowledge and runbook updates are documentation-only unless
+  Henry separately approves runtime changes, paid smoke, rollback, push, or
+  customer documentation publication.
+- The rollback artifact
+  `new-api-nightly-before-seedance-mini-rc1-20260626T162156Z` must remain
+  available through the observation window unless Henry explicitly approves
+  retiring it.
+- Passing Mini no-video production smoke does not authorize more paid tasks.
+  Mini `reference_video` production smoke and live Standard 4K reruns require
+  separate Henry approval.
+- A production balance/auth HTTP 403 from Codex is not automatically a runtime
+  failure. During this release, Henry verified the key manually, and the passing
+  Codex path used curl with Authorization supplied through stdin config after a
+  Python client path still returned 403.
+- Rejection cases require evidence of no task, no billing reservation, and no
+  upstream call. The HTTP 400 status and error type are necessary but not
+  sufficient by themselves.
+- Successful async Mini billing must be reconciled from final settlement
+  evidence such as settlement logs, `actual_quota`, final net quota, or usage
+  tokens. `tasks.quota` remains reservation evidence only.
+- Keep customer Mini documentation unpublished until Henry separately approves
+  publication.
+
 ## Security Notes
 
 No secrets, API keys, AK/SK, SQL DSNs, env files, DB dumps, production logs,
