@@ -1,7 +1,7 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `PREFLIGHT_RUNTIME_READY_CONFIG_PENDING`
+Status: `BLOCKED_HENRYTEST_API_KEY_ABSENT`
 Production deployed: no
 Preflight deployed: yes
 Customer documentation changed: no
@@ -53,7 +53,8 @@ Excluded from this local pass:
 - Production deployment.
 - Preflight smoke tests. The preflight runtime is a server-side Docker runtime,
   not Macmini Docker Desktop. The server runtime has been updated to Mini RC1
-  and is now waiting for Henry's manual preflight UI tenant configuration.
+  and Henry has manually completed the preflight UI tenant configuration, but
+  the current execution environment does not expose `HENRYTEST_API_KEY`.
 - Customer guide v2.1.4 publication or addendum publication.
 - New public customer endpoints.
 - Asset Library scope expansion.
@@ -257,9 +258,10 @@ version label.
 
 Preflight preparation is approved for this RC1, but production remains closed.
 The server preflight runtime has been updated to `new-api:seedance-mini-rc1`.
-Smoke tests are intentionally paused until Henry manually completes the
-preflight UI tenant/group/channel/token/model mapping and server-side project
-configuration.
+Henry later confirmed that the preflight UI tenant/group/channel/token/model
+mapping and server-side project configuration were completed manually. Smoke
+tests are currently blocked before any API request because
+`HENRYTEST_API_KEY` is absent in the current execution environment.
 
 Continuation attempt before server target was supplied:
 
@@ -331,6 +333,20 @@ Continuation attempt after temporary SSH key authentication was supplied:
 - `new-api-nightly` production and `new-api-staging` staging were not modified;
 - no preflight smoke was run after the update.
 
+Continuation attempt after Henry completed preflight UI configuration:
+
+- local hygiene passed again on branch `release/seedance-mini-v1` at
+  `b8de2717f44026a413203ba9e467a0186e0e25ea`;
+- `git status --short --branch` showed a clean branch before this documentation
+  update;
+- `git diff --stat` was empty before this documentation update;
+- `git diff --check` passed;
+- `HENRYTEST_API_KEY` was absent in the current execution environment;
+- no `/v1/billing/balance` request was sent;
+- no Mini, Fast, or Standard smoke request was sent;
+- no task, billing, or upstream evidence was produced in this blocked attempt;
+- Codex did not modify tenant/group/channel/token/customer configuration.
+
 Earlier local-only discovery is retained as non-authoritative context. Macmini
 Docker Desktop is not the preflight runtime and must not be used as the blocker
 for server preflight readiness:
@@ -350,12 +366,10 @@ modified or queried in the continuation passes.
 
 Required next gate:
 
-- Henry manually configures the Mini tenant-facing alias, group access, channel
-  support, upstream route, server-side project injection, and sufficient
-  balance/quota in the preflight UI;
-- Codex does not modify tenant/group/channel/token/customer configuration;
-- Codex resumes smoke only after Henry explicitly replies:
-  `预发 UI 配置完成，可以继续 smoke`.
+- provide `HENRYTEST_API_KEY` securely in the execution environment;
+- Codex confirms only presence with `test -n "${HENRYTEST_API_KEY:-}"`;
+- Codex uses the token only through `Authorization: Bearer
+  ${HENRYTEST_API_KEY}` and never prints or records its value.
 
 Required preflight gates:
 
@@ -422,9 +436,10 @@ value, raw env, channel/group ID, or customer data was printed or committed.
   redaction.
 - `web/dist` was generated locally through the Dockerfile Bun builder because
   the host shell does not currently provide `bun`.
-- The server preflight runtime is updated and ready for Henry's manual UI
-  configuration. Smoke remains blocked by the required human configuration gate.
-- `HENRYTEST_API_KEY` still must be checked immediately before smoke with
+- The server preflight runtime is updated and Henry's manual UI configuration
+  is complete. Smoke remains blocked because `HENRYTEST_API_KEY` is absent in
+  the current execution environment.
+- `HENRYTEST_API_KEY` must be checked immediately before smoke with
   `test -n "${HENRYTEST_API_KEY:-}"`; no token value may be printed.
 - The Mini reference-video duration is not read from remote media at submit
   time. RC1 uses a conservative 15s reference-input ceiling for reservation and
