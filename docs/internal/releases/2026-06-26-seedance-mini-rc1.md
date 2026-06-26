@@ -949,7 +949,17 @@ safety action.
 
 ## Customer Documentation Impact
 
-Do not publish customer guide v2.1.4 or a Mini addendum yet.
+Do not publish a Mini addendum or any internal release evidence through
+customer documentation.
+
+Customer guide archive status was prepared during final closeout:
+
+- `Light_Speed_Future_API_Integration_Guide_v2.1.4` is the current customer
+  guide designation;
+- `Light_Speed_Future_API_Integration_Guide_v2.1.3` is superseded;
+- archive status tracking does not publish the customer guide and does not
+  include upstream model IDs, provider project values, internal channel/group
+  identifiers, production smoke evidence, or other internal release evidence.
 
 After production pass, customer-safe Mini documentation may include:
 

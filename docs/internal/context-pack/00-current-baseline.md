@@ -52,6 +52,12 @@ rerun during Mini RC1 and remains an accepted risk from the release record.
 Customer Mini documentation remains unpublished until Henry separately approves
 publication.
 
+Customer guide archive status: `Light_Speed_Future_API_Integration_Guide_v2.1.4`
+is the current customer guide designation, and
+`Light_Speed_Future_API_Integration_Guide_v2.1.3` is superseded. Archive and
+publication work must remain customer-safe and must not include upstream model
+IDs, ProjectName values, internal channel/group IDs, or release smoke evidence.
+
 Asset Library paths are supported according to the tenant package.
 
 Cancel, delete, and list video tasks are not part of the current default scope unless separately enabled in writing.
