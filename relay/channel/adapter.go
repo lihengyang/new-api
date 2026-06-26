@@ -84,6 +84,13 @@ type TaskMappedRequestValidator interface {
 	ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 }
 
+// TaskPrechargeEstimator optionally raises submit-time reservation quota using
+// adaptor-specific request estimates. It must not mutate final-settlement
+// ratios; polling settlement remains authoritative when upstream usage arrives.
+type TaskPrechargeEstimator interface {
+	EstimatePrechargeQuota(c *gin.Context, info *relaycommon.RelayInfo) (quota int, ok bool)
+}
+
 type TaskSubmitResponse struct {
 	StatusCode int
 	Body       any

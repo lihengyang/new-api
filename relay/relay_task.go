@@ -231,6 +231,11 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 			}
 		}
 	}
+	if estimator, ok := adaptor.(channel.TaskPrechargeEstimator); ok {
+		if estimatedQuota, ok := estimator.EstimatePrechargeQuota(c, info); ok && estimatedQuota > info.PriceData.Quota {
+			info.PriceData.Quota = estimatedQuota
+		}
+	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {

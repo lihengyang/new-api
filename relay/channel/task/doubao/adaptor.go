@@ -2,8 +2,10 @@ package doubao
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -107,6 +109,11 @@ type TaskAdaptor struct {
 	baseURL     string
 }
 
+const (
+	seedanceMiniMaxDurationSeconds = 15
+	seedanceMiniOutputFPS          = 24
+)
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
@@ -183,6 +190,102 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		}
 	}
 	return nil
+}
+
+// EstimatePrechargeQuota raises Mini reservations to the official token formula
+// when that estimate is higher than the shared fixed task precharge.
+func (a *TaskAdaptor) EstimatePrechargeQuota(c *gin.Context, info *relaycommon.RelayInfo) (int, bool) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 0, false
+	}
+	billingCtx, ok, err := ResolveSeedanceIntlBilling(info.OriginModelName, info.UpstreamModelName, req.Metadata)
+	if err != nil || !ok || billingCtx.Family != seedanceBillingFamilyMini {
+		return 0, false
+	}
+	if info.PriceData.UsePrice || info.PriceData.ModelRatio <= 0 {
+		return 0, false
+	}
+
+	outputDuration := seedanceMiniOutputDurationSeconds(req)
+	inputDuration := 0
+	if billingCtx.InputType == seedanceBillingInputVideo {
+		// Current LSF submit path does not inspect remote reference-video
+		// duration. Use the Mini max as a conservative reservation ceiling.
+		inputDuration = seedanceMiniMaxDurationSeconds
+	}
+	width, height := seedanceMiniOutputDimensions(billingCtx.Resolution)
+	estimatedTokens := math.Ceil(float64(inputDuration+outputDuration) * float64(width) * float64(height) * seedanceMiniOutputFPS / 1024)
+	quota := math.Ceil(estimatedTokens * info.PriceData.ModelRatio * info.PriceData.GroupRatioInfo.GroupRatio * billingCtx.Ratio)
+	if quota <= 0 {
+		return 0, false
+	}
+	return int(quota), true
+}
+
+func seedanceMiniOutputDimensions(resolution string) (int, int) {
+	switch resolution {
+	case "480p":
+		return 854, 480
+	default:
+		return 1280, 720
+	}
+}
+
+func seedanceMiniOutputDurationSeconds(req relaycommon.TaskSubmitReq) int {
+	if duration, ok := metadataInt(req.Metadata, "duration"); ok {
+		return normalizeSeedanceMiniDuration(duration)
+	}
+	if req.Duration != 0 {
+		return normalizeSeedanceMiniDuration(req.Duration)
+	}
+	if seconds, err := strconv.Atoi(req.Seconds); err == nil && seconds != 0 {
+		return normalizeSeedanceMiniDuration(seconds)
+	}
+	return seedanceMiniMaxDurationSeconds
+}
+
+func normalizeSeedanceMiniDuration(duration int) int {
+	if duration == -1 {
+		return seedanceMiniMaxDurationSeconds
+	}
+	if duration > 0 {
+		return duration
+	}
+	return seedanceMiniMaxDurationSeconds
+}
+
+func metadataInt(metadata map[string]interface{}, key string) (int, bool) {
+	if metadata == nil {
+		return 0, false
+	}
+	raw, ok := metadata[key]
+	if !ok || raw == nil {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		if i, err := strconv.Atoi(v.String()); err == nil {
+			return i, true
+		}
+	case string:
+		if i, err := strconv.Atoi(v); err == nil {
+			return i, true
+		}
+	case dto.IntValue:
+		return int(v), true
+	case *dto.IntValue:
+		if v != nil {
+			return int(*v), true
+		}
+	}
+	return 0, false
 }
 
 // hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，

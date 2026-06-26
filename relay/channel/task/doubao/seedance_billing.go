@@ -8,6 +8,7 @@ import (
 const (
 	seedanceBillingFamilyStandard = "seedance_2_0"
 	seedanceBillingFamilyFast     = "seedance_2_0_fast"
+	seedanceBillingFamilyMini     = "seedance_2_0_mini"
 
 	seedanceBillingResolution480p720p = "480p_720p"
 	seedanceBillingResolution1080p    = "1080p"
@@ -16,7 +17,8 @@ const (
 	seedanceBillingInputVideo   = "video_input"
 	seedanceBillingInputNoVideo = "no_video_input"
 
-	seedanceBillingRuleVersion = "byteplus_seedance_2_0_intl_2026_06_4k"
+	seedanceBillingRuleVersion     = "byteplus_seedance_2_0_intl_2026_06_4k"
+	seedanceMiniBillingRuleVersion = "byteplus_seedance_2_0_mini_intl_2026_06_rc1"
 )
 
 type SeedanceBillingContext struct {
@@ -36,11 +38,13 @@ type seedanceBillingProfile struct {
 	ResolutionGroup  string
 	UnitPriceUsdPerK float64
 	Ratio            float64
+	RuleVersion      string
 }
 
 // Billing ratios are calculated against the base ModelRatio that the admin should configure.
 // For Seedance 2.0 standard, base = no-video 480p/720p = 0.0070 USD / K tokens.
 // For Seedance 2.0 fast, base = no-video 480p/720p = 0.0056 USD / K tokens.
+// For Seedance 2.0 mini, base = repository ratio unit = 0.0020 USD / K tokens.
 var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 	{
 		Family:           seedanceBillingFamilyStandard,
@@ -98,6 +102,22 @@ var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 		UnitPriceUsdPerK: 0.0033,
 		Ratio:            0.0033 / 0.0056,
 	},
+	{
+		Family:           seedanceBillingFamilyMini,
+		HasVideoInput:    false,
+		ResolutionGroup:  seedanceBillingResolution480p720p,
+		UnitPriceUsdPerK: 0.0035,
+		Ratio:            0.0035 / 0.0020,
+		RuleVersion:      seedanceMiniBillingRuleVersion,
+	},
+	{
+		Family:           seedanceBillingFamilyMini,
+		HasVideoInput:    true,
+		ResolutionGroup:  seedanceBillingResolution480p720p,
+		UnitPriceUsdPerK: 0.0021,
+		Ratio:            0.0021 / 0.0020,
+		RuleVersion:      seedanceMiniBillingRuleVersion,
+	},
 }
 
 // resolveSeedanceBillingFamily recognizes released Seedance 2.0 video-generation
@@ -109,6 +129,11 @@ func resolveSeedanceBillingFamily(modelNames ...string) string {
 		normalized := strings.ToLower(strings.TrimSpace(modelName))
 		if normalized == "" {
 			continue
+		}
+
+		if strings.Contains(normalized, "seedance-2.0-mini") ||
+			strings.Contains(normalized, "seedance-2-0-mini") {
+			return seedanceBillingFamilyMini
 		}
 
 		if strings.Contains(normalized, "seedance-2.0-fast") ||
@@ -201,6 +226,14 @@ func ResolveSeedanceIntlBilling(originModelName, upstreamModelName string, metad
 			return nil, true, fmt.Errorf("4k is not supported for Dreamina Seedance 2.0 fast; please use 480p or 720p")
 		}
 	}
+	if family == seedanceBillingFamilyMini {
+		switch resolutionGroup {
+		case seedanceBillingResolution1080p:
+			return nil, true, fmt.Errorf("1080p is not supported for Dreamina Seedance 2.0 mini; please use 480p or 720p")
+		case seedanceBillingResolution4K:
+			return nil, true, fmt.Errorf("4k is not supported for Dreamina Seedance 2.0 mini; please use 480p or 720p")
+		}
+	}
 
 	hasVideoInput := hasVideoInMetadata(metadata)
 	profile, ok := findSeedanceBillingProfile(family, hasVideoInput, resolutionGroup)
@@ -218,6 +251,11 @@ func ResolveSeedanceIntlBilling(originModelName, upstreamModelName string, metad
 		reason = "metadata.content.video_url_detected"
 	}
 
+	ruleVersion := profile.RuleVersion
+	if ruleVersion == "" {
+		ruleVersion = seedanceBillingRuleVersion
+	}
+
 	return &SeedanceBillingContext{
 		Family:           family,
 		InputType:        inputType,
@@ -225,7 +263,7 @@ func ResolveSeedanceIntlBilling(originModelName, upstreamModelName string, metad
 		ResolutionGroup:  resolutionGroup,
 		UnitPriceUsdPerK: profile.UnitPriceUsdPerK,
 		Ratio:            profile.Ratio,
-		RuleVersion:      seedanceBillingRuleVersion,
+		RuleVersion:      ruleVersion,
 		Reason:           reason,
 	}, true, nil
 }

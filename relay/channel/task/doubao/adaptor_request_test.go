@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -103,7 +104,119 @@ func TestTaskAdaptorValidateMappedRequestRejectsFastHighResolution(t *testing.T)
 	}
 }
 
+func TestTaskAdaptorValidateMappedRequestRejectsMiniHighResolution(t *testing.T) {
+	for _, resolution := range []string{"1080p", "4k"} {
+		t.Run(resolution, func(t *testing.T) {
+			c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{
+				Model:  "opaque-mini-tenant-alias",
+				Prompt: "test prompt",
+				Metadata: map[string]interface{}{
+					"resolution": resolution,
+				},
+			})
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "lsf-seedance-2.0-mini-henrytest",
+				ChannelMeta: &relaycommon.ChannelMeta{
+					UpstreamModelName: "dreamina-seedance-2-0-mini-260615",
+				},
+			}
+
+			taskErr := (&TaskAdaptor{}).ValidateMappedRequest(c, info)
+			require.NotNil(t, taskErr)
+			require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			require.Contains(t, taskErr.Message, resolution+" is not supported")
+		})
+	}
+}
+
+func TestTaskAdaptorEstimatePrechargeQuotaMiniUsesConservativeFormula(t *testing.T) {
+	tests := []struct {
+		name          string
+		metadata      map[string]interface{}
+		expectedQuota int
+	}{
+		{
+			name: "720p no video duration 15s",
+			metadata: map[string]interface{}{
+				"resolution": "720p",
+				"duration":   15,
+			},
+			expectedQuota: 567000,
+		},
+		{
+			name: "720p with video smart duration",
+			metadata: map[string]interface{}{
+				"resolution": "720p",
+				"duration":   -1,
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":      "video_url",
+						"video_url": map[string]interface{}{"url": "https://example.com/input.mp4"},
+						"role":      "reference_video",
+					},
+				},
+			},
+			expectedQuota: 680400,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{
+				Model:    "lsf-seedance-2.0-mini-henrytest",
+				Prompt:   "test prompt",
+				Metadata: tt.metadata,
+			})
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "lsf-seedance-2.0-mini-henrytest",
+				ChannelMeta: &relaycommon.ChannelMeta{
+					UpstreamModelName: "dreamina-seedance-2-0-mini-260615",
+				},
+				PriceData: types.PriceData{
+					ModelRatio: 1,
+					GroupRatioInfo: types.GroupRatioInfo{
+						GroupRatio: 1,
+					},
+				},
+			}
+
+			quota, ok := (&TaskAdaptor{}).EstimatePrechargeQuota(c, info)
+
+			require.True(t, ok)
+			require.Equal(t, tt.expectedQuota, quota)
+		})
+	}
+}
+
+func TestTaskAdaptorEstimatePrechargeQuotaSkipsNonMini(t *testing.T) {
+	c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{
+		Model:  "tenant-standard-alias",
+		Prompt: "test prompt",
+		Metadata: map[string]interface{}{
+			"resolution": "720p",
+			"duration":   15,
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "tenant-standard-alias",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "dreamina-seedance-2-0-260128",
+		},
+		PriceData: types.PriceData{
+			ModelRatio: 1,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+	}
+
+	_, ok := (&TaskAdaptor{}).EstimatePrechargeQuota(c, info)
+
+	require.False(t, ok)
+}
+
 func TestTaskAdaptorModelListIncludesDreaminaSeedance20Models(t *testing.T) {
 	require.Contains(t, (&TaskAdaptor{}).GetModelList(), "dreamina-seedance-2-0-260128")
 	require.Contains(t, (&TaskAdaptor{}).GetModelList(), "dreamina-seedance-2-0-fast-260128")
+	require.Contains(t, (&TaskAdaptor{}).GetModelList(), "dreamina-seedance-2-0-mini-260615")
 }

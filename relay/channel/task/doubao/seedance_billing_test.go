@@ -49,6 +49,32 @@ func mediaMetadata(resolution, mediaType string) map[string]interface{} {
 	return metadata
 }
 
+func durationMetadata(resolution string, duration int, hasVideo bool) map[string]interface{} {
+	metadata := noVideoMetadata(resolution)
+	metadata["duration"] = duration
+	if hasVideo {
+		metadata["content"] = []interface{}{
+			map[string]interface{}{
+				"type":      "video_url",
+				"video_url": map[string]interface{}{"url": "https://example.com/input.mp4"},
+				"role":      "reference_video",
+			},
+		}
+	}
+	return metadata
+}
+
+func textMetadata(resolution string) map[string]interface{} {
+	metadata := noVideoMetadata(resolution)
+	metadata["content"] = []interface{}{
+		map[string]interface{}{
+			"type": "text",
+			"text": "reference text only",
+		},
+	}
+	return metadata
+}
+
 func TestResolveSeedanceIntlBillingStandardNoVideo720p(t *testing.T) {
 	ctx, ok, err := ResolveSeedanceIntlBilling(
 		"lsf-seedance-2.0-aivision",
@@ -257,6 +283,124 @@ func TestResolveSeedanceIntlBillingFastVideo720p(t *testing.T) {
 	assertRatio(t, ctx.Ratio, 0.0033/0.0056)
 }
 
+func TestResolveSeedanceIntlBillingMiniPricing(t *testing.T) {
+	tests := []struct {
+		name              string
+		metadata          map[string]interface{}
+		expectedInputType string
+		expectedPrice     float64
+		expectedRatio     float64
+	}{
+		{
+			name:              "480p no video duration 4s",
+			metadata:          durationMetadata("480p", 4, false),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0035,
+			expectedRatio:     1.75,
+		},
+		{
+			name:              "720p no video duration 15s",
+			metadata:          durationMetadata("720p", 15, false),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0035,
+			expectedRatio:     1.75,
+		},
+		{
+			name:              "480p with video duration 4s",
+			metadata:          durationMetadata("480p", 4, true),
+			expectedInputType: seedanceBillingInputVideo,
+			expectedPrice:     0.0021,
+			expectedRatio:     1.05,
+		},
+		{
+			name:              "720p with video duration 15s",
+			metadata:          durationMetadata("720p", 15, true),
+			expectedInputType: seedanceBillingInputVideo,
+			expectedPrice:     0.0021,
+			expectedRatio:     1.05,
+		},
+		{
+			name:              "missing resolution defaults to 720p",
+			metadata:          durationMetadata("", 4, false),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0035,
+			expectedRatio:     1.75,
+		},
+		{
+			name:              "image input remains no video",
+			metadata:          mediaMetadata("720p", "image_url"),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0035,
+			expectedRatio:     1.75,
+		},
+		{
+			name:              "audio input remains no video",
+			metadata:          mediaMetadata("720p", "audio_url"),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0035,
+			expectedRatio:     1.75,
+		},
+		{
+			name:              "text input remains no video",
+			metadata:          textMetadata("720p"),
+			expectedInputType: seedanceBillingInputNoVideo,
+			expectedPrice:     0.0035,
+			expectedRatio:     1.75,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, ok, err := ResolveSeedanceIntlBilling(
+				"lsf-seedance-2.0-mini-henrytest",
+				"",
+				tt.metadata,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatal("expected Mini billing to match")
+			}
+			if ctx.Family != seedanceBillingFamilyMini {
+				t.Fatalf("family = %s", ctx.Family)
+			}
+			if ctx.InputType != tt.expectedInputType {
+				t.Fatalf("input type = %s, want %s", ctx.InputType, tt.expectedInputType)
+			}
+			if ctx.ResolutionGroup != seedanceBillingResolution480p720p {
+				t.Fatalf("resolution group = %s", ctx.ResolutionGroup)
+			}
+			if ctx.RuleVersion != seedanceMiniBillingRuleVersion {
+				t.Fatalf("rule version = %s", ctx.RuleVersion)
+			}
+			assertRatio(t, ctx.UnitPriceUsdPerK, tt.expectedPrice)
+			assertRatio(t, ctx.Ratio, tt.expectedRatio)
+		})
+	}
+}
+
+func TestResolveSeedanceIntlBillingMiniHighResolutionRejected(t *testing.T) {
+	for _, resolution := range []string{"1080p", "4k"} {
+		t.Run(resolution, func(t *testing.T) {
+			_, ok, err := ResolveSeedanceIntlBilling(
+				"lsf-seedance-2.0-mini-henrytest",
+				"",
+				noVideoMetadata(resolution),
+			)
+			if !ok {
+				t.Fatal("expected Mini billing to match")
+			}
+			if err == nil {
+				t.Fatalf("expected Mini %s to be rejected", resolution)
+			}
+			if !strings.Contains(err.Error(), resolution+" is not supported") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestResolveSeedanceIntlBillingFast1080pRejected(t *testing.T) {
 	_, ok, err := ResolveSeedanceIntlBilling(
 		"lsf-seedance-2.0-fast-aivision",
@@ -435,4 +579,23 @@ func TestResolveSeedanceIntlBillingDreaminaStandardUpstreamModelMatched(t *testi
 		t.Fatalf("family = %s", ctx.Family)
 	}
 	assertRatio(t, ctx.Ratio, 0.0040/0.0070)
+}
+
+func TestResolveSeedanceIntlBillingDreaminaMiniUpstreamModelMatched(t *testing.T) {
+	ctx, ok, err := ResolveSeedanceIntlBilling(
+		"tenant-mini-alias",
+		"dreamina-seedance-2-0-mini-260615",
+		videoMetadata("720p"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected upstream Mini model name to match Seedance billing")
+	}
+	if ctx.Family != seedanceBillingFamilyMini {
+		t.Fatalf("family = %s", ctx.Family)
+	}
+	assertRatio(t, ctx.UnitPriceUsdPerK, 0.0021)
+	assertRatio(t, ctx.Ratio, 1.05)
 }
