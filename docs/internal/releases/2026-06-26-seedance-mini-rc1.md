@@ -1,16 +1,17 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `READY_FOR_PRODUCTION_APPROVAL`
-Production deployed: no
+Status: `BLOCKED`
+Production deployed: yes
 Preflight deployed: yes
 Customer documentation changed: no
 
-This is the internal release-preparation record for Seedance 2.0 Mini RC1.
-It records local implementation and preflight-preparation evidence. Henry has
-approved entering the preflight preparation phase for this RC1. This record
-does not authorize production deployment, push, customer documentation
-publication, production smoke, or use of customer data.
+This is the internal release-preparation and rollout record for Seedance 2.0
+Mini RC1. It records local implementation, preflight, approved production
+runtime deployment, and the first production smoke attempt. Production smoke is
+currently blocked at the billing-balance gate. This record does not authorize
+push, customer documentation publication, customer configuration changes, or
+use of customer data.
 
 ## Artifact Identity
 
@@ -48,9 +49,10 @@ Implemented locally:
 - Targeted unit/regression tests for Mini pricing, Mini precharge estimation,
   Mini rejection, Standard 4K pricing regression, and Fast rejection regression.
 
-Excluded from this local pass:
+Excluded from the local implementation pass:
 
-- Production deployment.
+- Production deployment until Henry separately approved the Mini RC1 runtime
+  switch.
 - Customer guide v2.1.4 publication or addendum publication.
 - New public customer endpoints.
 - Asset Library scope expansion.
@@ -484,24 +486,39 @@ Preflight evidence was collected with sanitized DB queries and aggregate Docker
 log counts only. No raw env, raw logs, SQL DSN, API key, AK/SK, ProjectName,
 channel/group/internal ID, customer token, or raw customer data was printed.
 
-## Production Gate
+## Production Runtime Deployment
 
-Production remains closed. Do not deploy production until Henry separately
-approves production deployment after this `READY_FOR_PRODUCTION_APPROVAL`
-record.
+Henry explicitly approved production deployment for the runtime-only switch.
+Only `new-api-nightly` was changed to `new-api:seedance-mini-rc1`. Production
+group, channel, token, customer, tenant, staging, and preflight configuration
+were not modified by Codex.
 
-This record means Mini RC1 is ready for Henry's production deployment approval
-with the accepted Standard 4K live-preflight risk above. It does not authorize
-push, production deployment, production smoke, customer documentation
-publication, or customer configuration changes.
+Production runtime evidence after the switch and after the blocked smoke
+attempt:
 
-Production was not touched during this update. No production container, staging
-container, production DB, production env, production log, customer token, group,
-channel, or tenant configuration was modified.
+- production container: `new-api-nightly`;
+- image: `new-api:seedance-mini-rc1`;
+- OCI revision label: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`;
+- version label: `seedance-mini-rc1`;
+- running: yes;
+- restart count: `0`;
+- local `/api/status`: HTTP `200`;
+- public `/api/status`: HTTP `200`;
+- production MySQL backup was completed before the switch;
+- rollback container retained:
+  `new-api-nightly-before-seedance-mini-rc1-20260626T162156Z`;
+- rollback image: `new-api:seedance-4k-rc2`;
+- rollback revision: `49a45ebfbe95681c8fd95d253bcb03e92e740b19`.
+
+Rollback was not performed. The blocked production smoke did not show startup
+failure, health failure, restart-count increase, crash loop, image/revision
+mismatch, task creation, billing reservation, upstream call, duplicate billing,
+or retrieve-endpoint failure.
 
 ## Production Deployment Checklist
 
-Run this checklist only after Henry explicitly approves production deployment:
+This checklist was executed after Henry explicitly approved production
+deployment:
 
 1. Confirm repo state and artifact identity:
    - branch: `release/seedance-mini-v1`;
@@ -630,6 +647,84 @@ Required polling behavior:
   settlement logs, net quota change, or upstream usage tokens. `tasks.quota`
   remains reservation/precharge evidence only.
 
+## Production Smoke Attempt
+
+Production smoke was approved only after Henry manually completed production UI
+configuration and explicitly allowed smoke to continue. The production
+`henrytest` key was read from macOS Keychain into a temporary shell variable,
+confirmed present, used only for the approved HTTP Authorization header, and
+unset after the smoke attempt. The key value was not printed, written to disk,
+committed, or recorded.
+
+Smoke run reference:
+
+- run reference: `920ab806b5a0`;
+- base URL: production public API;
+- async policy: `30s` poll interval, `15m` soft wait, `45m` hard wait.
+
+Production smoke cases:
+
+```text
+billing_balance:
+  http=403
+  object=null
+  has_billing_balance_object=false
+  structured_error_code=null
+  structured_error_type=null
+  sanitized_error_category=unknown_403
+  result=blocked
+
+mini_1080p_reject:
+  result=not_run
+  reason=billing_balance_gate_blocked_before_video_requests
+
+mini_4k_reject:
+  result=not_run
+  reason=billing_balance_gate_blocked_before_video_requests
+
+mini_480p_novideo:
+  result=not_run
+  reason=billing_balance_gate_blocked_before_paid_task_submission
+
+mini_reference_video:
+  result=not_run
+  reason=not_explicitly_approved_for_extra_production_paid_task
+
+standard_4k_live_regression:
+  result=not_run
+  reason=accepted_risk_for_mini_rc1
+```
+
+No Mini production task was submitted in this attempt. Therefore there is no
+production Mini no-video reservation, final settlement, retrieve evidence, or
+rejection-before-task/billing/upstream evidence from this blocked run. The
+correct billing status for production remains:
+
+```text
+production_billing_settlement_not_reached
+```
+
+The blocked balance gate is not classified as `PRODUCTION_DEPLOY_PASSED` and is
+not classified as `PRODUCTION_SMOKE_ASYNC_PENDING`. The current production
+smoke status is:
+
+```text
+BLOCKED
+```
+
+Production runtime remained healthy after the blocked smoke attempt:
+
+- `new-api-nightly` remained on `new-api:seedance-mini-rc1`;
+- OCI revision label remained
+  `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`;
+- restart count remained `0`;
+- local `/api/status`: HTTP `200`;
+- public `/api/status`: HTTP `200`;
+- rollback container remained retained and stopped;
+- `new-api-preflight` was not modified;
+- `new-api-staging` was not modified;
+- customer documentation remained unpublished.
+
 ## Rollback Plan
 
 Rollback requires explicit Henry approval unless the production switch fails
@@ -691,6 +786,13 @@ Matches were limited to:
 - test-only tenant alias placeholders containing `henrytest`;
 - code header literals such as `Authorization: Bearer` without secret values;
 - policy and pricing terminology such as `tokens`, `token`, and `AK/SK`.
+
+Post-production-smoke changed-file sensitive scan found zero API-key-like
+values, bearer values, SQL DSN assignments, MySQL DSN strings, AWS-style access
+key IDs, AK/SK assignments, provider project assignments, or customer token
+values. Generic env-assignment hits were limited to historical `GOCACHE`
+commands and the documented Keychain command substitution variable name; no
+secret value was present.
 
 No API key, SQL DSN, AK/SK value, customer bearer token, provider ProjectName
 value, raw env, channel/group ID, or customer data was printed or committed.
