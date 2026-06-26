@@ -957,6 +957,10 @@ Customer guide archive status was prepared during final closeout:
 - `Light_Speed_Future_API_Integration_Guide_v2.1.4` is the current customer
   guide designation;
 - `Light_Speed_Future_API_Integration_Guide_v2.1.3` is superseded;
+- the local DOCX artifact was archived under `docs/customer/`;
+- the PDF artifact was not archived because local PDF generation/rendering was
+  blocked by the current LibreOffice dependency state, and the externally
+  generated PDF was not committed after customer-safety scanning;
 - archive status tracking does not publish the customer guide and does not
   include upstream model IDs, provider project values, internal channel/group
   identifiers, production smoke evidence, or other internal release evidence.

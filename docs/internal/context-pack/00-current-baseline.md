@@ -57,6 +57,9 @@ is the current customer guide designation, and
 `Light_Speed_Future_API_Integration_Guide_v2.1.3` is superseded. Archive and
 publication work must remain customer-safe and must not include upstream model
 IDs, ProjectName values, internal channel/group IDs, or release smoke evidence.
+The local archived customer artifact is the DOCX under `docs/customer/`; PDF
+generation remains blocked until the local document-rendering dependency is
+repaired or Henry supplies a customer-safe PDF artifact.
 
 Asset Library paths are supported according to the tenant package.
 

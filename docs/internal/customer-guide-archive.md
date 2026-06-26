@@ -11,10 +11,14 @@ As of the Seedance 2.0 Mini RC1 production closeout:
   `Light_Speed_Future_API_Integration_Guide_v2.1.4`
 - Superseded customer guide:
   `Light_Speed_Future_API_Integration_Guide_v2.1.3`
-- Archive status: prepared for customer guide archive tracking.
+- Archived DOCX artifact:
+  `docs/customer/Light_Speed_Future_API_Integration_Guide_v2.1.4.docx`
+- PDF artifact status: not archived in this commit. Local PDF generation/render
+  was blocked by the current LibreOffice dependency state, and the externally
+  generated PDF was not committed after customer-safety scanning.
 
-This register records guide status only. It does not publish customer
-documentation and does not attach or reproduce the guide artifact.
+This register records guide status and the local archive path. It does not
+publish customer documentation externally.
 
 ## Customer-Safe Boundary
 
