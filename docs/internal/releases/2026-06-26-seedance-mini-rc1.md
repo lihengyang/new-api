@@ -1,7 +1,7 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `BLOCKED_HENRYTEST_API_KEY_ABSENT`
+Status: `READY_FOR_PRODUCTION_APPROVAL`
 Production deployed: no
 Preflight deployed: yes
 Customer documentation changed: no
@@ -51,10 +51,6 @@ Implemented locally:
 Excluded from this local pass:
 
 - Production deployment.
-- Preflight smoke tests. The preflight runtime is a server-side Docker runtime,
-  not Macmini Docker Desktop. The server runtime has been updated to Mini RC1
-  and Henry has manually completed the preflight UI tenant configuration, but
-  the current execution environment does not expose `HENRYTEST_API_KEY`.
 - Customer guide v2.1.4 publication or addendum publication.
 - New public customer endpoints.
 - Asset Library scope expansion.
@@ -360,39 +356,310 @@ for server preflight readiness:
 - `HENRYTEST_API_KEY`: absent in the earlier local shell check; no token value
   was printed.
 
-No preflight env, raw preflight logs, preflight smoke, staging container,
-production container, production DB, production env, or production logs were
-modified or queried in the continuation passes.
+No raw preflight env, raw preflight logs, staging container, production
+container, production DB, production env, or production logs were printed or
+modified in the continuation passes.
 
-Required next gate:
+## Preflight Smoke Evidence
 
-- provide `HENRYTEST_API_KEY` securely in the execution environment;
-- Codex confirms only presence with `test -n "${HENRYTEST_API_KEY:-}"`;
-- Codex uses the token only through `Authorization: Bearer
-  ${HENRYTEST_API_KEY}` and never prints or records its value.
+Smoke run completed on 2026-06-26 using the server preflight endpoint directly
+on port `3002`. No SSH tunnel was required for API traffic.
 
-Required preflight gates:
+Post-smoke runtime identity check:
 
-- sanitized DB proof that preflight uses MySQL and is not production DB;
-- linux/amd64 image build with tag `new-api:seedance-mini-rc1`;
-- container health and restart count;
-- Mini 480p/720p no-video success;
-- Mini 480p/720p with-video success using approved safe test asset;
-- Mini 1080p rejection before task creation, billing, and upstream call;
-- Mini 4K rejection before task creation, billing, and upstream call;
-- Fast 4K rejection regression;
-- Standard 4K regression if tenant package and cost approval allow;
-- final settlement evidence, not just reservation evidence;
-- redacted logs and no secret exposure.
+- container: `new-api-preflight`;
+- image: `new-api:seedance-mini-rc1`;
+- OCI revision label: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`;
+- version label: `seedance-mini-rc1`;
+- restart count: `0`;
+- host port: `3002`.
+
+Token handling:
+
+- `HENRYTEST_API_KEY` was read from macOS Keychain using command substitution
+  into a temporary shell variable;
+- the token value was not printed, written to disk, committed, or recorded in
+  this release record;
+- the variable was unset after the smoke scripts completed.
+
+Billing balance:
+
+- `GET /v1/billing/balance`: HTTP `200`;
+- response object: `billing.balance`;
+- currency: `USD`;
+- balance schema observed: `balance.available`, `balance.used`,
+  `balance.unlimited`;
+- raw balance values were not recorded.
+
+Mini rejection gates were rerun in an isolated no-cost pass to avoid billing-log
+time-window overlap with the successful tasks:
+
+```text
+mini_1080p_reject:
+  http=400
+  error_shape=top_level_code
+  error_type_or_code=invalid_request_error
+  expected_resolution_message=yes
+  cid_ref=0a40aa6037b8
+  task_count=0
+  quota_sum=0
+  billing_log_count_window=0
+  error_log_count_window=0
+  no_upstream_call_evidence=prevalidation_no_task_no_billing
+
+mini_4k_reject:
+  http=400
+  error_shape=top_level_code
+  error_type_or_code=invalid_request_error
+  expected_resolution_message=yes
+  cid_ref=287a1664a4aa
+  task_count=0
+  quota_sum=0
+  billing_log_count_window=0
+  error_log_count_window=0
+  no_upstream_call_evidence=prevalidation_no_task_no_billing
+
+fast_4k_reject:
+  http=400
+  error_shape=top_level_code
+  error_type_or_code=invalid_request_error
+  expected_resolution_message=yes
+  cid_ref=d7dd5c7c274b
+  task_count=0
+  quota_sum=0
+  billing_log_count_window=0
+  error_log_count_window=0
+  no_upstream_call_evidence=prevalidation_no_task_no_billing
+```
+
+Mini no-video success:
+
+```text
+case=mini_480p_novideo
+submit_http=200
+task_ref=41c1188df6b86bf9
+metadata_client_request_id_match=yes
+poll_terminal_status=completed
+db_status=SUCCESS
+db_progress=100%
+reservation_quota=1531250
+completion_tokens=40594
+total_tokens=40594
+settlement_log_count=1
+actual_quota=248638
+settlement_delta_sum=1282612
+settlement_log_type_set=6
+```
+
+Mini `reference_video` success:
+
+```text
+case=mini_480p_reference_video
+submit_http=200
+task_ref=86d1c7e82f257769
+metadata_client_request_id_match=yes
+poll_terminal_status=completed
+db_status=SUCCESS
+db_progress=100%
+reservation_quota=918750
+completion_tokens=90814
+total_tokens=90814
+settlement_log_count=1
+actual_quota=333741
+settlement_delta_sum=585009
+settlement_log_type_set=6
+```
+
+Final settlement evidence passed for both successful Mini cases because each
+terminal `SUCCESS` task has upstream usage tokens plus one settlement log with
+`actual_quota`. The release is not in `billing_settlement_pending`.
+
+Accepted risk: Standard 4K live preflight regression was not run in this pass.
+Henry explicitly accepted this boundary for Mini RC1 readiness. Existing local
+regression tests still cover Standard 4K pricing behavior, and the 2026-06-23
+RC2 production record remains the current live Standard 4K evidence. This
+accepted risk does not authorize production deployment by itself.
+
+Preflight evidence was collected with sanitized DB queries and aggregate Docker
+log counts only. No raw env, raw logs, SQL DSN, API key, AK/SK, ProjectName,
+channel/group/internal ID, customer token, or raw customer data was printed.
 
 ## Production Gate
 
 Production remains closed. Do not deploy production until Henry separately
-approves production deployment after preflight passes.
+approves production deployment after this `READY_FOR_PRODUCTION_APPROVAL`
+record.
 
-`READY_FOR_PRODUCTION_APPROVAL` must not be reported until all required local,
-scan, build, preflight, settlement, regression, rollback, and secret-safety
-gates pass.
+This record means Mini RC1 is ready for Henry's production deployment approval
+with the accepted Standard 4K live-preflight risk above. It does not authorize
+push, production deployment, production smoke, customer documentation
+publication, or customer configuration changes.
+
+Production was not touched during this update. No production container, staging
+container, production DB, production env, production log, customer token, group,
+channel, or tenant configuration was modified.
+
+## Production Deployment Checklist
+
+Run this checklist only after Henry explicitly approves production deployment:
+
+1. Confirm repo state and artifact identity:
+   - branch: `release/seedance-mini-v1`;
+   - release record status: `READY_FOR_PRODUCTION_APPROVAL`;
+   - runtime/image commit: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`;
+   - image tag: `new-api:seedance-mini-rc1`;
+   - preflight smoke status: passed;
+   - final Mini billing settlement: passed.
+2. Perform read-only production baseline checks:
+   - current production container identity;
+   - current production image and OCI revision;
+   - restart count and health/status endpoint;
+   - MySQL production DB identity/fingerprint;
+   - confirm production and preflight DB targets are different.
+3. Back up the production MySQL DB using the approved internal backup procedure.
+   Do not paste backup contents, SQL DSN, credentials, env, or dumps into this
+   record.
+4. Preserve rollback state before switching production:
+   - record the current production image tag, image ID, and OCI revision;
+   - retain or create a rollback container/image reference for the current
+     production release;
+   - confirm the rollback artifact can be started without rebuilding from docs.
+5. Deploy only the production container after approval:
+   - switch `new-api-nightly` to `new-api:seedance-mini-rc1`;
+   - keep restart policy consistent with the existing production setup;
+   - do not modify `new-api-staging`;
+   - do not modify tenant group/channel/token/customer configuration.
+6. Verify production startup:
+   - container is running;
+   - restart count remains stable;
+   - health/status endpoint returns OK;
+   - sanitized error-pattern count is acceptable;
+   - image label still reports
+     `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`.
+7. Run the minimal approved production smoke only if Henry separately approves
+   production smoke and cost, and only after Henry has completed production UI
+   configuration and explicitly replied `生产 UI 配置完成，可以继续 smoke`:
+   - billing balance shape;
+   - Mini 480p/720p no-video success;
+   - Mini 480p/720p `reference_video` success;
+   - Mini 1080p rejection before task, billing, and upstream;
+   - Mini 4K rejection before task, billing, and upstream;
+   - Fast 4K rejection regression;
+   - `GET /v1/videos/{task_id}` for successful Mini tasks;
+   - final billing settlement evidence, not only `tasks.quota`.
+8. Keep all production evidence sanitized:
+   - no API keys, AK/SK, SQL DSN, env, raw logs, DB dumps, ProjectName,
+     channel/group/internal IDs, customer bearer tokens, raw request bodies, or
+     real customer data.
+
+After a successful production runtime deployment, stop before API smoke and
+report:
+
+```text
+PRODUCTION_RUNTIME_READY_CONFIG_PENDING
+```
+
+## Production UI Configuration Gate
+
+Production `henrytest` uses a different API key from preflight. Do not reuse
+the preflight smoke key for production smoke.
+
+After the production runtime is healthy, Henry must manually configure the real
+production UI before any production API smoke:
+
+- production `henrytest` token group access;
+- Mini tenant-facing alias and model mapping;
+- group allowed model;
+- channel model support;
+- channel upstream Mini mapping and endpoint;
+- server-side project injection;
+- sufficient balance/quota for minimal smoke.
+
+Codex must not modify production group, channel, token, customer, or tenant
+configuration through DB, UI, or API. If production smoke later reports
+model-not-allowed, channel unavailable, no available channel, or alias missing,
+stop and report:
+
+```text
+BLOCKED_PRODUCTION_TENANT_CONFIG_PENDING
+```
+
+Only describe the configuration class Henry needs to adjust. Do not output
+internal channel/group IDs, provider project values, or customer tokens.
+
+## Production Key Handling
+
+Recommended macOS Keychain service for production smoke:
+
+```text
+lsf-production-henrytest-api-key
+```
+
+Read the production `henrytest` key only into a temporary shell variable:
+
+```text
+HENRYTEST_PROD_API_KEY="$(security find-generic-password -w -a henrytest -s lsf-production-henrytest-api-key)"
+test -n "${HENRYTEST_PROD_API_KEY:-}" && echo "HENRYTEST_PROD_API_KEY present"
+```
+
+Rules:
+
+- do not print or echo the key value;
+- do not write it to file, release record, git, logs, shell history, or server;
+- use it only in the `Authorization` header for approved production smoke;
+- after smoke, run `unset HENRYTEST_PROD_API_KEY`;
+- if absent, stop and report:
+
+```text
+BLOCKED_PRODUCTION_HENRYTEST_API_KEY_ABSENT
+```
+
+## Production Smoke Polling Policy
+
+Async video generation can be slow. During approved production smoke, queued,
+running, in-progress, or processing states are not rollback reasons by
+themselves.
+
+Required polling behavior:
+
+- keep polling `GET /v1/videos/{task_id}` patiently with bounded waits;
+- do not rollback just because a task is not terminal yet;
+- classify a smoke case as blocked or failed only after the agreed polling
+  window, terminal failure, health regression, or explicit error evidence;
+- final billing still requires settlement evidence such as `actual_quota`,
+  settlement logs, net quota change, or upstream usage tokens. `tasks.quota`
+  remains reservation/precharge evidence only.
+
+## Rollback Plan
+
+Rollback requires explicit Henry approval unless the production switch fails
+before serving traffic and immediate revert is the pre-approved deployment
+safety action.
+
+1. Roll back container runtime first:
+   - stop the Mini RC1 production container if it is unhealthy;
+   - restore the previously recorded production image/container reference;
+   - do not rebuild rollback from a later docs-only commit.
+2. Verify rollback health:
+   - production container running;
+   - restart count stable;
+   - health/status endpoint OK;
+   - current image/revision matches the recorded rollback artifact.
+3. Database rollback policy:
+   - do not rollback DB blindly;
+   - Mini RC1 introduces no planned DB migration, so expected rollback is
+     container/image only;
+   - if unexpected DB mutation is suspected, stop and review the production
+     backup plus sanitized read-only evidence before any DB restore.
+4. Post-rollback evidence:
+   - record sanitized image/revision, health, restart count, and smoke result;
+   - record whether any Mini production task was created before rollback;
+   - keep secrets, raw env, raw logs, SQL DSN, customer tokens, and internal IDs
+     out of the record.
+5. Customer-facing action:
+   - do not publish Mini customer documentation until production deployment and
+     any approved production smoke pass;
+   - if rollback happens, leave customer docs unchanged.
 
 ## Customer Documentation Impact
 
@@ -430,17 +697,13 @@ value, raw env, channel/group ID, or customer data was printed or committed.
 
 ## Known Limitations
 
-- No preflight smoke evidence exists yet for Mini success, Mini rejection
-  no-task proof, route configuration, token ability, reservation, or final
-  settlement. MySQL runtime and startup evidence has been collected with
-  redaction.
+- Live Standard 4K preflight regression was not run in this Mini pass. Henry
+  accepted this as a Mini RC1 production-approval risk boundary.
 - `web/dist` was generated locally through the Dockerfile Bun builder because
   the host shell does not currently provide `bun`.
-- The server preflight runtime is updated and Henry's manual UI configuration
-  is complete. Smoke remains blocked because `HENRYTEST_API_KEY` is absent in
-  the current execution environment.
-- `HENRYTEST_API_KEY` must be checked immediately before smoke with
-  `test -n "${HENRYTEST_API_KEY:-}"`; no token value may be printed.
+- The first continuation attempts were blocked because `HENRYTEST_API_KEY` was
+  not present in the Codex execution environment. The successful smoke pass used
+  the macOS Keychain path and still did not print the token.
 - The Mini reference-video duration is not read from remote media at submit
-  time. RC1 uses a conservative 15s reference-input ceiling for reservation and
-  requires final settlement evidence from upstream usage.
+  time. RC1 uses a conservative 15s reference-input ceiling for reservation; the
+  successful preflight pass also verified final settlement from upstream usage.
