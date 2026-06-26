@@ -1,17 +1,17 @@
 # Seedance 2.0 Mini RC1 Release Record
 
 Date: 2026-06-26
-Status: `BLOCKED`
+Status: `PRODUCTION_DEPLOY_PASSED`
 Production deployed: yes
 Preflight deployed: yes
 Customer documentation changed: no
 
 This is the internal release-preparation and rollout record for Seedance 2.0
 Mini RC1. It records local implementation, preflight, approved production
-runtime deployment, and the first production smoke attempt. Production smoke is
-currently blocked at the billing-balance gate. This record does not authorize
-push, customer documentation publication, customer configuration changes, or
-use of customer data.
+runtime deployment, and production smoke evidence. Production Mini no-video
+smoke passed after the Keychain value was refreshed and Codex switched the API
+transport to curl. This record does not authorize push, customer documentation
+publication, customer configuration changes, or use of customer data.
 
 ## Artifact Identity
 
@@ -808,6 +808,114 @@ Runtime health after the retry was verified separately without Authorization:
 - rollback was not performed;
 - customer documentation remained unpublished.
 
+## Production Smoke Pass After Keychain Refresh
+
+Henry manually verified that the production `henrytest` key could call the
+public billing-balance endpoint and then overwrote macOS Keychain service
+`lsf-production-henrytest-api-key` with the verified key. Codex then reran
+production smoke from the balance gate.
+
+Token and transport handling:
+
+- production `henrytest` key was read from macOS Keychain into a temporary shell
+  variable;
+- only `HENRYTEST_PROD_API_KEY present` was printed;
+- the token value was not printed, written to disk, committed, or recorded;
+- API requests used curl with Authorization supplied through stdin config;
+- the variable was unset after each smoke script.
+
+Balance gate:
+
+```text
+billing_balance:
+  transport=curl_config_stdin
+  http=200
+  object=billing.balance
+  currency=USD
+  has_balance_object=true
+```
+
+An earlier Codex Python `urllib` request path still returned HTTP `403` while
+the same Keychain value worked through curl. That is recorded as a Codex client
+transport issue, not a production runtime failure.
+
+Mini high-resolution rejection evidence was rerun after fixing the SSH evidence
+payload quoting path:
+
+```text
+mini_1080p_reject:
+  run_ref=8f3735bb24ef
+  http=400
+  error_shape=top_level_code
+  error_type_or_code=invalid_request_error
+  expected_resolution_message=yes
+  cid_ref=fb791077de36
+  task_count=0
+  quota_sum=0
+  billing_log_count_window=0
+  error_log_count_window=0
+  no_upstream_call_evidence=prevalidation_no_task_no_billing
+
+mini_4k_reject:
+  run_ref=8f3735bb24ef
+  http=400
+  error_shape=top_level_code
+  error_type_or_code=invalid_request_error
+  expected_resolution_message=yes
+  cid_ref=5cb872dff928
+  task_count=0
+  quota_sum=0
+  billing_log_count_window=0
+  error_log_count_window=0
+  no_upstream_call_evidence=prevalidation_no_task_no_billing
+```
+
+Mini no-video success:
+
+```text
+case=mini_480p_novideo
+run_ref=8ad35432e65a
+submit_http=200
+task_ref=b3e99ea8cf9adebd
+cid_ref=0a65e0a5e072
+retrieve_http=200
+poll_terminal_status=completed
+poll_elapsed_seconds=121
+db_status=SUCCESS
+db_progress=100%
+task_count=1
+reservation_quota=1531250
+completion_tokens=40594
+total_tokens=40594
+settlement_log_count=1
+actual_quota=248638
+settlement_delta_sum=1282612
+settlement_log_type_set=6
+```
+
+Final settlement evidence passed because the successful terminal task has
+upstream usage tokens plus one settlement log with `actual_quota`. Production
+is not in `production_billing_settlement_pending`.
+
+Production runtime health after the successful Mini no-video smoke:
+
+- `new-api-nightly` remained on `new-api:seedance-mini-rc1`;
+- OCI revision label remained
+  `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`;
+- restart count remained `0`;
+- local `/api/status`: HTTP `200`;
+- public `/api/status`: HTTP `200`;
+- rollback container remained retained and stopped;
+- rollback image remained `new-api:seedance-4k-rc2`;
+- `new-api-preflight` was not modified;
+- `new-api-staging` was not modified;
+- rollback was not performed;
+- customer documentation remained unpublished.
+
+Mini `reference_video` production smoke was not run because Henry did not
+approve an extra paid production task. Live Standard 4K production regression
+was not run because Henry had already accepted that risk boundary for Mini RC1.
+
 ## Rollback Plan
 
 Rollback requires explicit Henry approval unless the production switch fails
@@ -882,6 +990,13 @@ bearer values, SQL DSN assignments, MySQL DSN strings, AWS-style access key
 IDs, AK/SK assignments, provider project assignments, and unexpected env
 assignments. The only env-assignment patterns were the historical `GOCACHE`
 commands and the documented Keychain command substitution variable name.
+
+Post-production-pass changed-file sensitive scan remained clean for
+API-key-like values, bearer values, SQL DSN assignments, MySQL DSN strings,
+AWS-style access key IDs, AK/SK assignments, provider project assignments, and
+unexpected env assignments. The only env-assignment patterns remained the
+historical `GOCACHE` commands and the documented Keychain command substitution
+variable name.
 
 No API key, SQL DSN, AK/SK value, customer bearer token, provider ProjectName
 value, raw env, channel/group ID, or customer data was printed or committed.
