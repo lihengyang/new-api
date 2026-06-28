@@ -173,7 +173,7 @@ func TestTaskAdaptorEstimatePrechargeQuotaMiniUsesConservativeFormula(t *testing
 					UpstreamModelName: "dreamina-seedance-2-0-mini-260615",
 				},
 				PriceData: types.PriceData{
-					ModelRatio: 1,
+					ModelRatio: 0.0035 / 0.0020,
 					GroupRatioInfo: types.GroupRatioInfo{
 						GroupRatio: 1,
 					},
@@ -213,6 +213,34 @@ func TestTaskAdaptorEstimatePrechargeQuotaSkipsNonMini(t *testing.T) {
 	_, ok := (&TaskAdaptor{}).EstimatePrechargeQuota(c, info)
 
 	require.False(t, ok)
+}
+
+func TestTaskAdaptorEstimatePrechargeQuotaMiniFamilyBaseModelRatioRegression(t *testing.T) {
+	c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{
+		Model:  "lsf-seedance-2.0-mini-henrytest",
+		Prompt: "test prompt",
+		Metadata: map[string]interface{}{
+			"resolution": "720p",
+			"duration":   15,
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "lsf-seedance-2.0-mini-henrytest",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "dreamina-seedance-2-0-mini-260615",
+		},
+		PriceData: types.PriceData{
+			ModelRatio: 0.0035 / 0.0020,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+	}
+
+	quota, ok := (&TaskAdaptor{}).EstimatePrechargeQuota(c, info)
+
+	require.True(t, ok)
+	require.Equal(t, 567000, quota)
 }
 
 func TestTaskAdaptorModelListIncludesDreaminaSeedance20Models(t *testing.T) {

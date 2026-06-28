@@ -41,10 +41,12 @@ type seedanceBillingProfile struct {
 	RuleVersion      string
 }
 
-// Billing ratios are calculated against the base ModelRatio that the admin should configure.
-// For Seedance 2.0 standard, base = no-video 480p/720p = 0.0070 USD / K tokens.
-// For Seedance 2.0 fast, base = no-video 480p/720p = 0.0056 USD / K tokens.
-// For Seedance 2.0 mini, base = repository ratio unit = 0.0020 USD / K tokens.
+// Billing profiles store OtherRatio values only.
+// Standard, Fast, and Mini all use:
+// ModelRatio = family no-video base / repo unit.
+// OtherRatio = current tier / family no-video base.
+// Family no-video bases are Standard 0.0070, Fast 0.0056, and Mini
+// 0.0035 USD / K tokens.
 var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 	{
 		Family:           seedanceBillingFamilyStandard,
@@ -107,7 +109,7 @@ var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 		HasVideoInput:    false,
 		ResolutionGroup:  seedanceBillingResolution480p720p,
 		UnitPriceUsdPerK: 0.0035,
-		Ratio:            0.0035 / 0.0020,
+		Ratio:            1.0,
 		RuleVersion:      seedanceMiniBillingRuleVersion,
 	},
 	{
@@ -115,7 +117,7 @@ var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 		HasVideoInput:    true,
 		ResolutionGroup:  seedanceBillingResolution480p720p,
 		UnitPriceUsdPerK: 0.0021,
-		Ratio:            0.0021 / 0.0020,
+		Ratio:            0.0021 / 0.0035,
 		RuleVersion:      seedanceMiniBillingRuleVersion,
 	},
 }
