@@ -10,21 +10,37 @@ Billing internals such as pre-deduct, refund, top-up, `modelRatio`, `groupRatio`
 
 For commercial billing conclusions, verify current logs and DB behavior rather than relying on upstream new-api assumptions.
 
-`tasks.quota` is reservation/precharge evidence only. For terminal SUCCESS
-video tasks, final billing must be validated against settlement evidence such
-as `actual_quota`, final net quota, or upstream usage token fields.
+## Billing Release Invariants
 
-New Seedance model releases must verify the effective billing ratio, not only
-the resolver output. The release gate should prove:
+`tasks.quota` is reservation/precharge evidence only. It is not final billing
+evidence for a terminal SUCCESS async video task.
+
+Terminal SUCCESS billing must be validated from settlement evidence such as
+`actual_quota`, settlement logs, final net quota, and upstream usage token
+fields. A settlement-exists check is not enough; the final amount must match
+the exact quota formula:
 
 ```text
-effective ratio = ModelRatio * OtherRatio
-effective ratio = official tier price / repository unit price
+actual_quota = floor(tokens * ModelRatio * GroupRatio * OtherRatio)
 ```
 
-For families with a family no-video base, keep the semantics explicit:
+Every new Seedance billing tier must also prove the effective price invariant:
+
+```text
+ModelRatio * OtherRatio = official tier price / repo unit price
+```
+
+For Seedance Standard, Fast, and Mini, keep the family-base semantics explicit
+unless a release record explicitly approves and tests another convention:
 
 ```text
 ModelRatio = family no-video base / repo unit
 OtherRatio = current tier / family no-video base
+```
+
+Mini Scheme B final semantics:
+
+```text
+Mini no-video    = 1.75 * 1.0 = 1.75
+Mini video-input = 1.75 * 0.6 = 1.05
 ```

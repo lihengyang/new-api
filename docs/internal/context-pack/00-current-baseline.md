@@ -50,8 +50,9 @@ baseline.
 
 The original Mini billing incident affected four Mini SUCCESS tasks in the
 audited production window. Token-level quota credit of `364016` was completed
-for the two verified live token targets. Smoke tasks were not compensated, and
-Mini customer access remains unrestored.
+for the two verified live token targets. Smoke tasks were not compensated.
+Customer Mini usage was manually paused outside system configuration; no
+system Mini access toggle was changed or restored.
 
 Customer Mini documentation remains unpublished until Henry separately approves
 publication.

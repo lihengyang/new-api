@@ -6,7 +6,7 @@ Preflight deployed: yes
 Production deployed: yes
 Quota credit completed: yes
 Customer documentation changed: no
-Mini customer access restored: no
+System Mini access toggle changed/restored: no; customer usage pause was manual only
 
 ## Summary
 
@@ -51,6 +51,9 @@ when the alias `ModelRatio` was configured as `1.75`.
 - Release branch pushed: `origin/release/seedance-mini-v1`
 - Commit: `9ef110f928f40a88bf426432db08807b9edf89cb`
 - Commit subject: `fix: align seedance mini billing ratios with family base`
+- Internal docs/audit commit: `9dad9b4b00766add641299853b1a5542221d1bc2`
+- Internal docs/audit subject:
+  `docs: record seedance mini billing hotfix and compensation`
 - Image tag: `new-api:seedance-mini-billing-scheme-b-rc1`
 - Image ID prefix: `c991ffe082dc`
 - Image revision label: `9ef110f928f40a88bf426432db08807b9edf89cb`
@@ -112,6 +115,10 @@ No additional paid production smoke is authorized by this record.
 - No `ModelRatio * OtherRatio` invariant.
 - Production-only alias was not covered by smoke.
 - Codex App smoke key handling was not pinned to a single Keychain procedure.
+- Blast-radius reasoning could confuse a customer sample with the affected
+  production population.
+- Compensation target reconciliation did not initially distinguish placeholder
+  token hashes from live billing tokens.
 
 ## Local Hotfix Scope
 
@@ -166,11 +173,35 @@ Henry explicitly approves retiring it.
 
 ## Open Status
 
-- Mini customer access has not been restored.
+- Customer Mini usage was manually paused outside system configuration. No
+  system Mini access toggle was changed, and no system restoration is required
+  by this incident record.
 - Customer documentation was not changed.
 - No additional credit, refund, deployment, restart, config change, token
   change, channel change, group change, alias change, or customer-access change
   is authorized by this record.
+
+## Post-Incident Hardening Rules
+
+Future Seedance model releases must carry these gates forward:
+
+- `tasks.quota` is reservation/precharge evidence only.
+- Terminal SUCCESS billing must be checked against `actual_quota`, settlement
+  logs, final net quota, and upstream usage tokens.
+- Exact billing validation must prove
+  `actual_quota = floor(tokens * ModelRatio * GroupRatio * OtherRatio)`.
+- Every new tier must prove
+  `ModelRatio * OtherRatio = official tier price / repo unit price`.
+- Standard, Fast, and Mini use
+  `ModelRatio = family no-video base / repo unit` and
+  `OtherRatio = current tier / family no-video base` unless an approved release
+  record explicitly tests a different convention.
+- Blast radius must come from the production task window, not a customer sample.
+- Compensation must target the reconciled live billing token and must exclude
+  smoke tasks and placeholder token hashes.
+- Codex App smoke must use the macOS Keychain item with account `henrytest` and
+  service `lsf-henrytest-api-key`, then pass `/v1/billing/balance` before any
+  paid smoke.
 
 ## Security and Verification Caveats
 

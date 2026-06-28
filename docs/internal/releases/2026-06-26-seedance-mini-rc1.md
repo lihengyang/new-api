@@ -1004,6 +1004,15 @@ lessons for future Seedance releases:
 - Successful async Mini billing must be reconciled from final settlement
   evidence such as settlement logs, `actual_quota`, final net quota, or usage
   tokens. `tasks.quota` remains reservation evidence only.
+- Post Scheme B incident hardening requires exact final quota validation:
+  `actual_quota = floor(tokens * ModelRatio * GroupRatio * OtherRatio)`.
+- Future Seedance tiers must prove
+  `ModelRatio * OtherRatio = official tier price / repo unit price`, using the
+  family-base convention shared by Standard, Fast, and Mini unless an approved
+  release explicitly tests a different convention.
+- For Codex App smoke, the current fixed Keychain path is account `henrytest`
+  and service `lsf-henrytest-api-key`. Earlier service-name references in this
+  RC1 record are historical evidence for that run, not the future default.
 - Keep customer Mini documentation unpublished until Henry separately approves
   publication.
 

@@ -63,10 +63,22 @@ terminal successful async video tasks must be reconciled from settlement logs,
 `actual_quota`, and final net quota, then checked against the expected effective
 upstream price.
 
+Wrong: a final settlement row proves billing is correct.
+
+Correct: terminal SUCCESS billing must prove the exact quota formula:
+`actual_quota = floor(tokens * ModelRatio * GroupRatio * OtherRatio)`.
+
 Wrong: customer sample count equals the affected incident population.
 
 Correct: blast radius must be derived from the audited production task window
 and must exclude post-fix smoke tasks unless the smoke itself is affected.
+
+Wrong: a customer sample can be compensated directly from the sample token
+reference.
+
+Correct: compensation targets must be reconciled to the live billing token,
+user, and group. Placeholder token hashes are audit breadcrumbs, not credit
+targets.
 
 Wrong: preflight settlement existence is enough for a billing release gate.
 
@@ -84,6 +96,15 @@ Wrong: Codex App inherits Terminal-exported smoke-token environment variables.
 Correct: Codex App should create/read its own macOS Keychain item and verify
 `/v1/billing/balance` before paid smoke.
 
+Wrong: pasting a smoke key into chat, using a hidden PTY prompt, writing a
+temporary secret file, or guessing a token from the DB is an acceptable way to
+unblock Codex App smoke.
+
+Correct: Codex App smoke uses the macOS Keychain item with account
+`henrytest` and service `lsf-henrytest-api-key`. Entry or replacement uses a
+macOS hidden dialog only, and only presence/status plus balance response shape
+may be printed.
+
 Wrong: copied container labels are authoritative over the running image label.
 
 Correct: after a Docker container is recreated from an image, inspect the
@@ -97,6 +118,13 @@ Correct: first isolate Keychain value, client transport, and tenant
 configuration. During Mini RC1, Henry verified the same key through the public
 endpoint while one Codex Python client path still saw HTTP 403; curl with
 Authorization supplied through stdin config passed the balance gate.
+
+Wrong: a `/v1/billing/balance` gate failure automatically proves production
+runtime failure.
+
+Correct: balance gate failure is first a key, client, or tenant configuration
+blocker unless independent runtime evidence proves otherwise. Stop before paid
+smoke when the balance gate fails.
 
 Wrong: passing Mini no-video production smoke authorizes additional paid
 production video tasks.

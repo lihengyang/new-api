@@ -30,7 +30,8 @@ billing hotfix production deployment, smoke pass, and quota correction:
 - Original affected Mini SUCCESS tasks in the audited window: `4`.
 - Total token-level quota credit completed: `364016`.
 - Smoke tasks were not compensated.
-- Mini customer access remains unrestored until Henry separately approves.
+- Customer Mini usage was manually paused outside system configuration; no
+  system Mini access toggle was changed or restored.
 - The rollback artifact must be preserved through the observation window unless
   Henry explicitly approves retiring it.
 - Customer Mini documentation remains unpublished until separately approved.
