@@ -30,6 +30,7 @@ Release gate should include:
 - preflight startup
 - schema verification
 - billing balance test
+- exact final billing invariant test from settlement evidence
 - no-client_request_id regression
 - `client_request_id` first request
 - duplicate replay
@@ -46,6 +47,19 @@ The Mini RC1 production pass used curl with Authorization supplied through
 stdin config after a Python client path returned HTTP 403 with the same
 Keychain value.
 
+For Mac Codex App smoke, the smoke key procedure is:
+
+- create or read the macOS Keychain item from inside Codex App;
+- account: `henrytest`;
+- service: `lsf-henrytest-api-key`;
+- use a macOS hidden dialog for key entry when the item must be replaced;
+- run `/v1/billing/balance` before any paid video smoke;
+- print only presence/status and response-shape checks, never the key;
+- do not rely on Terminal-exported environment variables carrying into Codex
+  App;
+- do not use hidden PTY prompts;
+- do not use temporary secret files.
+
 A production balance/auth 403 from a local smoke client is not by itself a
 rollback trigger when runtime health is stable. First separate client transport,
 Keychain value, and tenant configuration problems from production runtime
@@ -54,3 +68,12 @@ failures.
 For successful async video tasks, do not mark final billing passed from
 `tasks.quota` alone. Require settlement logs, `actual_quota`, final net quota,
 or upstream usage token evidence.
+
+For new billing tiers, require an exact final quota invariant:
+
+```text
+expected final quota = floor(tokens * ModelRatio * groupRatio * OtherRatio)
+```
+
+The invariant must use the same `ModelRatio` and `OtherRatio` semantics that
+production/preflight aliases use. A settlement-exists check is not enough.

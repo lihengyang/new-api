@@ -63,6 +63,33 @@ terminal successful async video tasks must be reconciled from settlement logs,
 `actual_quota`, and final net quota, then checked against the expected effective
 upstream price.
 
+Wrong: customer sample count equals the affected incident population.
+
+Correct: blast radius must be derived from the audited production task window
+and must exclude post-fix smoke tasks unless the smoke itself is affected.
+
+Wrong: preflight settlement existence is enough for a billing release gate.
+
+Correct: settlement evidence must match the exact expected final quota and
+effective ratio.
+
+Wrong: Mini can use a different `ModelRatio` / `OtherRatio` semantic from
+Standard and Fast without an explicit gate.
+
+Correct: Seedance families should share the family-base billing convention
+unless a release record explicitly approves and tests a different convention.
+
+Wrong: Codex App inherits Terminal-exported smoke-token environment variables.
+
+Correct: Codex App should create/read its own macOS Keychain item and verify
+`/v1/billing/balance` before paid smoke.
+
+Wrong: copied container labels are authoritative over the running image label.
+
+Correct: after a Docker container is recreated from an image, inspect the
+running image label for revision evidence. Container labels may retain an older
+copied revision when the deployment path preserves container configuration.
+
 Wrong: a local production smoke HTTP 403 always means the production API or
 tenant token is broken.
 

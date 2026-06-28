@@ -2,24 +2,23 @@
 
 Product: Light Speed Future Seedance 2.0 API proxy based on customized new-api nightly.
 
-Current production release status as of the 2026-06-26 Seedance 2.0 Mini RC1
-production deployment and smoke pass:
+Current production release status as of the 2026-06-28 Seedance Mini Scheme B
+billing hotfix, production validation, and quota correction:
 
 - Status: `PRODUCTION_DEPLOY_PASSED`
 - Production container: `new-api-nightly`
-- Current production image: `new-api:seedance-mini-rc1`
-- Image ID:
-  `sha256:420a29a4dac01fae8b13ca06c54dcc793e1422c90ee45279c68c24fcd6c6d50a`
-- Code / OCI revision: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`
-- Previous production image: `new-api:seedance-4k-rc2`
-- Previous production image ID:
-  `sha256:25488855505bd222069ebc3ccb63d525f7302b53fa42ceaa403b28dcb9e3273b`
+- Current production image: `new-api:seedance-mini-billing-scheme-b-rc1`
+- Current production image ID prefix: `c991ffe082dc`
+- Current code / OCI revision: `9ef110f928f40a88bf426432db08807b9edf89cb`
+- Previous production image: `new-api:seedance-mini-rc1`
+- Previous production revision: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`
 - Preserved rollback container:
-  `new-api-nightly-before-seedance-mini-rc1-20260626T162156Z`
+  `new-api-nightly-before-seedance-mini-billing-scheme-b-20260628T030527Z`
 
-The Mini RC1 production deployment used the preflight-validated artifact. It
-was not rebuilt from docs-only commits. The rollback artifact must remain
-available through the observation window unless Henry explicitly retires it.
+The Scheme B hotfix production deployment used the preflight-validated
+artifact. It was not rebuilt from docs-only commits. The rollback artifact must
+remain available through the observation window unless Henry explicitly retires
+it.
 
 Production domain:
 
@@ -43,11 +42,16 @@ supports tenant-enabled 480p and 720p requests. Mini 1080p and Mini 4K remain
 rejected before task creation, billing, and upstream calls. Fast 1080p and Fast
 4K requests remain rejected before task creation, billing, and upstream calls.
 
-Mini RC1 production smoke passed for billing balance, Mini high-resolution
-rejection, Mini 480p no-video success, retrieve, and final settlement evidence.
-Mini `reference_video` production smoke was not run because it requires
-separate approval for an extra paid production task. Live Standard 4K was not
-rerun during Mini RC1 and remains an accepted risk from the release record.
+Scheme B production smoke passed for billing balance, Mini high-resolution
+rejection, Mini no-video exact final billing, Mini video-input exact final
+billing, and Fast 4K rejection regression. Post-fix Mini smoke tasks had zero
+final-billing delta. No additional paid production smoke is authorized by this
+baseline.
+
+The original Mini billing incident affected four Mini SUCCESS tasks in the
+audited production window. Token-level quota credit of `364016` was completed
+for the two verified live token targets. Smoke tasks were not compensated, and
+Mini customer access remains unrestored.
 
 Customer Mini documentation remains unpublished until Henry separately approves
 publication.
