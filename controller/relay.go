@@ -122,6 +122,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	if relayFormat == types.RelayFormatOpenAIAudio &&
+		relayInfo.RelayMode == relayconstant.RelayModeAudioSpeech &&
+		relay.IsSeedAudioAlias(relayInfo.OriginModelName) {
+		addUsedChannel(c, c.GetInt("channel_id"))
+		newAPIError = relay.SeedAudioHelper(c, relayInfo)
+		return
+	}
+
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
