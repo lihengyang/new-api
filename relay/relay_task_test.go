@@ -33,7 +33,7 @@ func setupRelayTaskTestDB(t *testing.T) {
 		sqlDB.SetMaxOpenConns(1)
 	}
 
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.UserSubscription{}))
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.UserSubscription{}, &model.SeedAudioIdempotency{}))
 	require.NoError(t, db.Create(&model.User{
 		Id:       1001,
 		Username: "relay-task-test-user",

@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -236,7 +237,8 @@ func TestSeedAudioRequestHMACIsStableAndSecretBacked(t *testing.T) {
 	require.NotEqual(t, first, changed)
 }
 
-func TestSeedAudioIdempotencyFailsClosedWhenRedisUnavailable(t *testing.T) {
+func TestSeedAudioIdempotencyUsesDBWhenRedisUnavailable(t *testing.T) {
+	setupRelayTaskTestDB(t)
 	oldRedisEnabled := common.RedisEnabled
 	oldRDB := common.RDB
 	common.RedisEnabled = false
@@ -246,9 +248,7 @@ func TestSeedAudioIdempotencyFailsClosedWhenRedisUnavailable(t *testing.T) {
 		common.RDB = oldRDB
 	})
 
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", nil)
+	c := newSeedAudioIdempotencyTestContext()
 
 	idem, cached, apiErr := seedAudioPrepareIdempotency(c, &relaycommon.RelayInfo{TokenId: 123}, &seedAudioNormalizedRequest{
 		TextPrompt:      "hello",
@@ -256,11 +256,105 @@ func TestSeedAudioIdempotencyFailsClosedWhenRedisUnavailable(t *testing.T) {
 		ReferenceMode:   "text_only",
 		ClientRequestID: "req_1",
 	})
+	require.NotNil(t, idem)
+	require.Nil(t, cached)
+	require.Nil(t, apiErr)
+
+	var row model.SeedAudioIdempotency
+	require.NoError(t, model.DB.Where("token_id = ? AND client_request_id = ?", 123, "req_1").First(&row).Error)
+	require.Equal(t, model.SeedAudioIdempotencyStatusPending, row.Status)
+	require.NotEmpty(t, row.RequestHMAC)
+}
+
+func TestSeedAudioIdempotencyDBCompletedReplay(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	c := newSeedAudioIdempotencyTestContext()
+	info := &relaycommon.RelayInfo{TokenId: 123}
+	normalized := &seedAudioNormalizedRequest{
+		TextPrompt:      "hello",
+		Format:          seedAudioDefaultFormat,
+		ReferenceMode:   "text_only",
+		ClientRequestID: "req_replay",
+	}
+
+	idem, cached, apiErr := seedAudioPrepareIdempotency(c, info, normalized)
+	require.Nil(t, apiErr)
+	require.Nil(t, cached)
+	require.NotNil(t, idem)
+	require.NoError(t, idem.storeCompleted(c, dto.SeedAudioIdempotencyRecord{
+		RequestHMAC:      idem.requestHMAC,
+		Status:           model.SeedAudioIdempotencyStatusCompleted,
+		ResponseID:       "aud_cached",
+		TemporaryURL:     "https://tmp.example.com/audio.mp3",
+		URLExpiresAt:     time.Now().Add(time.Hour).Unix(),
+		Duration:         7.5,
+		OriginalDuration: 8.25,
+		ActualQuota:      10312,
+		CreatedAt:        1234,
+	}))
+
+	replayed, cached, apiErr := seedAudioPrepareIdempotency(c, info, normalized)
+	require.Nil(t, apiErr)
+	require.NotNil(t, replayed)
+	require.NotNil(t, cached)
+	require.Equal(t, "aud_cached", cached.ResponseID)
+	require.Equal(t, "https://tmp.example.com/audio.mp3", cached.TemporaryURL)
+	require.EqualValues(t, 1234, cached.CreatedAt)
+}
+
+func TestSeedAudioIdempotencyDBConflictDifferentRequest(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	c := newSeedAudioIdempotencyTestContext()
+	info := &relaycommon.RelayInfo{TokenId: 123}
+	normalized := &seedAudioNormalizedRequest{
+		TextPrompt:      "hello",
+		Format:          seedAudioDefaultFormat,
+		ReferenceMode:   "text_only",
+		ClientRequestID: "req_conflict",
+	}
+	idem, cached, apiErr := seedAudioPrepareIdempotency(c, info, normalized)
+	require.Nil(t, apiErr)
+	require.Nil(t, cached)
+	require.NotNil(t, idem)
+
+	normalized.TextPrompt = "hello changed"
+	replayed, cached, apiErr := seedAudioPrepareIdempotency(c, info, normalized)
+	require.Nil(t, replayed)
+	require.Nil(t, cached)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusConflict, apiErr.StatusCode)
+	require.Equal(t, "idempotency_conflict", apiErr.ToOpenAIError().Code)
+}
+
+func TestSeedAudioIdempotencyDBExpiredResultReturnsGone(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	now := time.Now().Unix()
+	require.NoError(t, model.DB.Create(&model.SeedAudioIdempotency{
+		CreatedAt:          now - 7200,
+		UpdatedAt:          now - 7200,
+		TokenID:            123,
+		ClientRequestID:    "req_expired",
+		RequestHMAC:        "unused",
+		Status:             model.SeedAudioIdempotencyStatusCompleted,
+		ResponseID:         "aud_expired",
+		TemporaryURL:       "https://tmp.example.com/expired.mp3",
+		URLExpiresAt:       now - 1,
+		ExpiresAt:          now - 1,
+		TombstoneExpiresAt: now + 3600,
+	}).Error)
+
+	c := newSeedAudioIdempotencyTestContext()
+	idem, cached, apiErr := seedAudioPrepareIdempotency(c, &relaycommon.RelayInfo{TokenId: 123}, &seedAudioNormalizedRequest{
+		TextPrompt:      "hello",
+		Format:          seedAudioDefaultFormat,
+		ReferenceMode:   "text_only",
+		ClientRequestID: "req_expired",
+	})
 	require.Nil(t, idem)
 	require.Nil(t, cached)
 	require.NotNil(t, apiErr)
-	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
-	require.Equal(t, "seed_audio_idempotency_unavailable", apiErr.ToOpenAIError().Code)
+	require.Equal(t, http.StatusGone, apiErr.StatusCode)
+	require.Equal(t, "idempotency_result_expired", apiErr.ToOpenAIError().Code)
 }
 
 func TestSeedAudioAliasGate(t *testing.T) {
@@ -277,4 +371,11 @@ func seedAudioTestRequest(t *testing.T, body string) (*dto.AudioRequest, map[str
 	var bodyMap map[string]interface{}
 	require.NoError(t, common.Unmarshal([]byte(body), &bodyMap))
 	return &req, bodyMap
+}
+
+func newSeedAudioIdempotencyTestContext() *gin.Context {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", nil)
+	return c
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
 )
 
@@ -121,10 +120,9 @@ type seedAudioUpstreamResult struct {
 }
 
 type seedAudioIdempotencyContext struct {
-	key          string
-	tombstoneKey string
-	requestHMAC  string
-	clientID     string
+	recordID    int64
+	requestHMAC string
+	clientID    string
 }
 
 // IsSeedAudioAlias returns true for the LSF customer-facing Seed Audio aliases.
@@ -493,96 +491,98 @@ func seedAudioPrepareIdempotency(c *gin.Context, info *relaycommon.RelayInfo, no
 	if !seedAudioValidClientRequestID(clientID) {
 		return nil, nil, seedAudioError(http.StatusBadRequest, "invalid_request_error", "invalid_client_request_id", relaycommon.ClientRequestIDErrorMessage, "metadata.client_request_id")
 	}
-	if !common.RedisEnabled || common.RDB == nil {
-		seedAudioMetric.idempotencyUnavailable.Add(1)
-		return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency requires Redis", "metadata.client_request_id")
-	}
 	requestHMAC, err := seedAudioRequestHMAC(normalized)
 	if err != nil {
 		return nil, nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to build Seed Audio idempotency fingerprint", "")
 	}
-	idem := &seedAudioIdempotencyContext{
-		key:          fmt.Sprintf("seed_audio:idemp:%d:%s", info.TokenId, clientID),
-		tombstoneKey: fmt.Sprintf("seed_audio:idemp_expired:%d:%s", info.TokenId, clientID),
-		requestHMAC:  requestHMAC,
-		clientID:     clientID,
-	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
-
-	existingValue, err := common.RDB.Get(ctx, idem.key).Result()
+	now := time.Now().Unix()
+	pending, err := model.CreateSeedAudioIdempotencyPending(seedAudioPendingParams(info.TokenId, clientID, requestHMAC, now))
 	if err == nil {
-		record, apiErr := seedAudioDecodeIdempotencyRecord(existingValue)
-		if apiErr != nil {
-			seedAudioMetric.idempotencyUnavailable.Add(1)
-			return nil, nil, apiErr
-		}
-		if record.RequestHMAC != requestHMAC {
-			seedAudioMetric.idempotencyConflict.Add(1)
-			return nil, nil, seedAudioError(http.StatusConflict, "invalid_request_error", "idempotency_conflict", "metadata.client_request_id was already used with a different request", "metadata.client_request_id")
-		}
-		switch record.Status {
-		case "completed":
-			return idem, &record, nil
-		case "pending":
-			seedAudioMetric.idempotencyConflict.Add(1)
-			return nil, nil, seedAudioError(http.StatusConflict, "invalid_request_error", "idempotency_in_progress", "Seed Audio request with this client_request_id is still in progress", "metadata.client_request_id")
-		case "failed":
-			return nil, nil, seedAudioError(record.ErrorStatusCode, "upstream_error", record.ErrorCode, "Seed Audio request with this client_request_id already failed; use a new client_request_id to retry", "metadata.client_request_id")
-		default:
-			seedAudioMetric.idempotencyUnavailable.Add(1)
-			return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency state is invalid", "metadata.client_request_id")
-		}
+		return &seedAudioIdempotencyContext{
+			recordID:    pending.ID,
+			requestHMAC: requestHMAC,
+			clientID:    clientID,
+		}, nil, nil
 	}
-	if err != redis.Nil {
+	if !model.IsSeedAudioIdempotencyDuplicateError(err) {
 		seedAudioMetric.idempotencyUnavailable.Add(1)
 		return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency store is unavailable", "metadata.client_request_id")
 	}
 
-	tombstone, err := common.RDB.Exists(ctx, idem.tombstoneKey).Result()
-	if err != nil {
+	existing, exists, findErr := model.GetSeedAudioIdempotencyByTokenClientRequestID(info.TokenId, clientID)
+	if findErr != nil || !exists {
 		seedAudioMetric.idempotencyUnavailable.Add(1)
-		return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency store is unavailable", "metadata.client_request_id")
+		return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency state is unavailable", "metadata.client_request_id")
 	}
-	if tombstone > 0 {
-		return nil, nil, seedAudioError(http.StatusGone, "invalid_request_error", "idempotency_result_expired", "metadata.client_request_id was used previously but the cached Seed Audio result expired", "metadata.client_request_id")
-	}
-
-	pending := dto.SeedAudioIdempotencyRecord{
-		RequestHMAC: requestHMAC,
-		Status:      "pending",
-		CreatedAt:   time.Now().Unix(),
-	}
-	pendingJSON, err := common.Marshal(pending)
-	if err != nil {
-		return nil, nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to reserve Seed Audio idempotency state", "")
-	}
-	ok, err := common.RDB.SetNX(ctx, idem.key, string(pendingJSON), seedAudioIdempotencyTTL).Result()
-	if err != nil || !ok {
-		seedAudioMetric.idempotencyUnavailable.Add(1)
-		return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency store is unavailable", "metadata.client_request_id")
-	}
-	if err := common.RDB.Set(ctx, idem.tombstoneKey, "1", seedAudioIdempotencyTombstoneTTL).Err(); err != nil {
-		_ = common.RDB.Del(ctx, idem.key).Err()
-		seedAudioMetric.idempotencyUnavailable.Add(1)
-		return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency store is unavailable", "metadata.client_request_id")
-	}
-	return idem, nil, nil
+	return seedAudioHandleExistingIdempotency(existing, requestHMAC, now, info.TokenId, clientID)
 }
 
-func seedAudioDecodeIdempotencyRecord(value string) (dto.SeedAudioIdempotencyRecord, *types.NewAPIError) {
-	var record dto.SeedAudioIdempotencyRecord
-	if err := common.Unmarshal([]byte(value), &record); err != nil {
-		return record, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency state is unreadable", "metadata.client_request_id")
+func seedAudioHandleExistingIdempotency(existing *model.SeedAudioIdempotency, requestHMAC string, now int64, tokenID int, clientID string) (*seedAudioIdempotencyContext, *dto.SeedAudioIdempotencyRecord, *types.NewAPIError) {
+	if seedAudioIdempotencyExpired(existing, now) {
+		if existing.TombstoneExpiresAt > now {
+			return nil, nil, seedAudioError(http.StatusGone, "invalid_request_error", "idempotency_result_expired", "metadata.client_request_id was used previously but the cached Seed Audio result expired", "metadata.client_request_id")
+		}
+		reclaimed, err := model.ReclaimSeedAudioIdempotencyPending(existing.ID, existing.UpdatedAt, seedAudioPendingParams(tokenID, clientID, requestHMAC, now))
+		if err != nil {
+			seedAudioMetric.idempotencyConflict.Add(1)
+			return nil, nil, seedAudioError(http.StatusConflict, "invalid_request_error", "idempotency_in_progress", "Seed Audio request with this client_request_id is still in progress", "metadata.client_request_id")
+		}
+		return &seedAudioIdempotencyContext{
+			recordID:    reclaimed.ID,
+			requestHMAC: requestHMAC,
+			clientID:    clientID,
+		}, nil, nil
 	}
+
+	if existing.RequestHMAC != requestHMAC {
+		seedAudioMetric.idempotencyConflict.Add(1)
+		return nil, nil, seedAudioError(http.StatusConflict, "invalid_request_error", "idempotency_conflict", "metadata.client_request_id was already used with a different request", "metadata.client_request_id")
+	}
+
+	record := existing.ToRecord()
 	if record.ErrorStatusCode == 0 {
 		record.ErrorStatusCode = http.StatusServiceUnavailable
 	}
 	if record.ErrorCode == "" {
 		record.ErrorCode = "seed_audio_upstream_error"
 	}
-	return record, nil
+	switch existing.Status {
+	case model.SeedAudioIdempotencyStatusCompleted:
+		return &seedAudioIdempotencyContext{
+			recordID:    existing.ID,
+			requestHMAC: requestHMAC,
+			clientID:    clientID,
+		}, &record, nil
+	case model.SeedAudioIdempotencyStatusPending:
+		seedAudioMetric.idempotencyConflict.Add(1)
+		return nil, nil, seedAudioError(http.StatusConflict, "invalid_request_error", "idempotency_in_progress", "Seed Audio request with this client_request_id is still in progress", "metadata.client_request_id")
+	case model.SeedAudioIdempotencyStatusFailed:
+		return nil, nil, seedAudioError(record.ErrorStatusCode, "upstream_error", record.ErrorCode, "Seed Audio request with this client_request_id already failed; use a new client_request_id to retry", "metadata.client_request_id")
+	default:
+		seedAudioMetric.idempotencyUnavailable.Add(1)
+		return nil, nil, seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency state is invalid", "metadata.client_request_id")
+	}
+}
+
+func seedAudioIdempotencyExpired(existing *model.SeedAudioIdempotency, now int64) bool {
+	if existing.ExpiresAt <= now {
+		return true
+	}
+	return existing.Status == model.SeedAudioIdempotencyStatusCompleted &&
+		existing.URLExpiresAt > 0 &&
+		existing.URLExpiresAt <= now
+}
+
+func seedAudioPendingParams(tokenID int, clientID string, requestHMAC string, now int64) model.SeedAudioIdempotencyPendingParams {
+	return model.SeedAudioIdempotencyPendingParams{
+		TokenID:            tokenID,
+		ClientRequestID:    clientID,
+		RequestHMAC:        requestHMAC,
+		Now:                now,
+		ExpiresAt:          now + int64(seedAudioIdempotencyTTL.Seconds()),
+		TombstoneExpiresAt: now + int64(seedAudioIdempotencyTombstoneTTL.Seconds()),
+	}
 }
 
 func seedAudioRequestHMAC(normalized *seedAudioNormalizedRequest) (string, error) {
@@ -609,49 +609,41 @@ func seedAudioRequestHMAC(normalized *seedAudioNormalizedRequest) (string, error
 	return common.GenerateHMAC(string(canonicalBytes)), nil
 }
 
-func (idem *seedAudioIdempotencyContext) storeCompleted(c *gin.Context, record dto.SeedAudioIdempotencyRecord) error {
+func (idem *seedAudioIdempotencyContext) storeCompleted(_ *gin.Context, record dto.SeedAudioIdempotencyRecord) error {
 	if idem == nil {
 		return nil
 	}
-	body, err := common.Marshal(record)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
-	if err := common.RDB.Set(ctx, idem.key, string(body), seedAudioIdempotencyTTL).Err(); err != nil {
-		return err
-	}
-	return common.RDB.Set(ctx, idem.tombstoneKey, "1", seedAudioIdempotencyTombstoneTTL).Err()
+	now := time.Now().Unix()
+	return model.CompleteSeedAudioIdempotency(model.SeedAudioIdempotencyCompleteParams{
+		ID:                 idem.recordID,
+		Record:             record,
+		UpdatedAt:          now,
+		ExpiresAt:          now + int64(seedAudioIdempotencyTTL.Seconds()),
+		TombstoneExpiresAt: now + int64(seedAudioIdempotencyTombstoneTTL.Seconds()),
+	})
 }
 
-func (idem *seedAudioIdempotencyContext) storeFailure(c *gin.Context, apiErr *types.NewAPIError) error {
+func (idem *seedAudioIdempotencyContext) storeFailure(_ *gin.Context, apiErr *types.NewAPIError) error {
 	if idem == nil || apiErr == nil {
 		return nil
 	}
-	record := dto.SeedAudioIdempotencyRecord{
-		RequestHMAC:     idem.requestHMAC,
-		Status:          "failed",
-		CreatedAt:       time.Now().Unix(),
-		ErrorCode:       fmt.Sprintf("%v", apiErr.ToOpenAIError().Code),
-		ErrorStatusCode: apiErr.StatusCode,
-	}
-	body, err := common.Marshal(record)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
-	return common.RDB.Set(ctx, idem.key, string(body), seedAudioIdempotencyTTL).Err()
+	now := time.Now().Unix()
+	return model.FailSeedAudioIdempotency(model.SeedAudioIdempotencyFailParams{
+		ID:                 idem.recordID,
+		RequestHMAC:        idem.requestHMAC,
+		ErrorCode:          fmt.Sprintf("%v", apiErr.ToOpenAIError().Code),
+		ErrorStatusCode:    apiErr.StatusCode,
+		UpdatedAt:          now,
+		ExpiresAt:          now + int64(seedAudioIdempotencyTTL.Seconds()),
+		TombstoneExpiresAt: now + int64(seedAudioIdempotencyTombstoneTTL.Seconds()),
+	})
 }
 
-func (idem *seedAudioIdempotencyContext) abandon(c *gin.Context) error {
+func (idem *seedAudioIdempotencyContext) abandon(_ *gin.Context) error {
 	if idem == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
-	return common.RDB.Del(ctx, idem.key, idem.tombstoneKey).Err()
+	return model.DeleteSeedAudioIdempotency(idem.recordID)
 }
 
 func seedAudioValidClientRequestID(clientRequestID string) bool {
