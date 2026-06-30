@@ -163,7 +163,9 @@ export const useLogsData = () => {
   };
 
   // Column visibility state
-  const [visibleColumns, setVisibleColumns] = useState(getInitialVisibleColumns);
+  const [visibleColumns, setVisibleColumns] = useState(
+    getInitialVisibleColumns,
+  );
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [billingDisplayMode, setBillingDisplayMode] = useState(
     getInitialBillingDisplayMode,
@@ -363,6 +365,49 @@ export const useLogsData = () => {
     setShowParamOverrideModal(true);
   };
 
+  const formatSeedAudioSeconds = (value) => {
+    const duration = Number(value);
+    if (!Number.isFinite(duration) || duration < 0) {
+      return '-';
+    }
+    return `${duration.toFixed(3).replace(/\.?0+$/, '')} s`;
+  };
+
+  const formatSeedAudioRatio = (groupRatio, userGroupRatio) => {
+    const parsedUserGroupRatio = Number(userGroupRatio);
+    const useUserGroupRatio =
+      Number.isFinite(parsedUserGroupRatio) && parsedUserGroupRatio !== -1;
+    const ratio = useUserGroupRatio ? userGroupRatio : groupRatio;
+    if (ratio === undefined || ratio === null || ratio === '') {
+      return '-';
+    }
+    return `${useUserGroupRatio ? t('专属倍率') : t('分组')} ${ratio}x`;
+  };
+
+  const renderSeedAudioUsageLogContent = (other, quota) => {
+    const actualQuota = other?.actual_quota ?? quota;
+    const originalDuration = other?.original_duration ?? other?.duration;
+    const baseQuotaPerSecond = other?.base_quota_per_second ?? 1250;
+    const preConsumedQuota = other?.pre_consumed_quota;
+    const lines = [
+      `${t('计费类型')}：${t('秒级音频')}`,
+      `${t('结算时长来源')}：original_duration`,
+      `${t('原始音频时长')}：${formatSeedAudioSeconds(originalDuration)}`,
+      `${t('基础单价')}：${baseQuotaPerSecond} ${t('额度/秒')}`,
+      `${t('倍率')}：${formatSeedAudioRatio(
+        other?.group_ratio,
+        other?.user_group_ratio,
+      )}`,
+      preConsumedQuota !== undefined
+        ? `${t('预扣')}：${renderQuota(preConsumedQuota, 6)}`
+        : null,
+      `${t('最终扣费')}：${renderQuota(actualQuota, 6)}`,
+      `${t('参考输入')}：${other?.reference_mode || '-'}`,
+      `${t('输出 URL')}：${other?.output_url_present ? 'present' : 'absent'}`,
+    ].filter(Boolean);
+    return <div style={{ whiteSpace: 'pre-line' }}>{lines.join('\n')}</div>;
+  };
+
   // Format logs data
   const setLogsFormat = (logs) => {
     const requestConversionDisplayValue = (conversionChain) => {
@@ -380,9 +425,14 @@ export const useLogsData = () => {
       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
       logs[i].key = logs[i].id;
       let other = getLogOther(logs[i].other);
+      const isSeedAudioUsageLog =
+        logs[i].type === 2 && other?.seed_audio === true;
       let expandDataLocal = [];
 
-      if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)) {
+      if (
+        isAdminUser &&
+        (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)
+      ) {
         expandDataLocal.push({
           key: t('渠道信息'),
           value: `${logs[i].channel} - ${logs[i].channel_name || '[未知]'}`,
@@ -427,40 +477,42 @@ export const useLogsData = () => {
       if (logs[i].type === 2) {
         expandDataLocal.push({
           key: t('日志详情'),
-          value: other?.claude
-            ? renderClaudeLogContent(
-                other?.model_ratio,
-                other.completion_ratio,
-                other.model_price,
-                other.group_ratio,
-                other?.user_group_ratio,
-                other.cache_ratio || 1.0,
-                other.cache_creation_ratio || 1.0,
-                other.cache_creation_tokens_5m || 0,
-                other.cache_creation_ratio_5m ||
-                  other.cache_creation_ratio ||
+          value: isSeedAudioUsageLog
+            ? renderSeedAudioUsageLogContent(other, logs[i].quota)
+            : other?.claude
+              ? renderClaudeLogContent(
+                  other?.model_ratio,
+                  other.completion_ratio,
+                  other.model_price,
+                  other.group_ratio,
+                  other?.user_group_ratio,
+                  other.cache_ratio || 1.0,
+                  other.cache_creation_ratio || 1.0,
+                  other.cache_creation_tokens_5m || 0,
+                  other.cache_creation_ratio_5m ||
+                    other.cache_creation_ratio ||
+                    1.0,
+                  other.cache_creation_tokens_1h || 0,
+                  other.cache_creation_ratio_1h ||
+                    other.cache_creation_ratio ||
+                    1.0,
+                  billingDisplayMode,
+                )
+              : renderLogContent(
+                  other?.model_ratio,
+                  other.completion_ratio,
+                  other.model_price,
+                  other.group_ratio,
+                  other?.user_group_ratio,
+                  other.cache_ratio || 1.0,
+                  false,
                   1.0,
-                other.cache_creation_tokens_1h || 0,
-                other.cache_creation_ratio_1h ||
-                  other.cache_creation_ratio ||
-                  1.0,
-                billingDisplayMode,
-              )
-            : renderLogContent(
-                other?.model_ratio,
-                other.completion_ratio,
-                other.model_price,
-                other.group_ratio,
-                other?.user_group_ratio,
-                other.cache_ratio || 1.0,
-                false,
-                1.0,
-                other.web_search || false,
-                other.web_search_call_count || 0,
-                other.file_search || false,
-                other.file_search_call_count || 0,
-                billingDisplayMode,
-              ),
+                  other.web_search || false,
+                  other.web_search_call_count || 0,
+                  other.file_search || false,
+                  other.file_search_call_count || 0,
+                  billingDisplayMode,
+                ),
         });
         if (logs[i]?.content) {
           expandDataLocal.push({
@@ -501,6 +553,8 @@ export const useLogsData = () => {
           const isTaskLog = other?.is_task === true || other?.task_id != null;
           if (isTaskLog && other?.model_price === -1) {
             content = renderTaskBillingProcess(other, logs[i].content);
+          } else if (isSeedAudioUsageLog) {
+            content = renderSeedAudioUsageLogContent(other, logs[i].quota);
           } else if (other?.ws || other?.audio) {
             content = renderAudioModelPrice(
               other?.text_input,
@@ -592,7 +646,14 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('失败原因'),
             value: (
-              <div style={{ maxWidth: 600, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.6 }}>
+              <div
+                style={{
+                  maxWidth: 600,
+                  whiteSpace: 'normal',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
                 {other.reason}
               </div>
             ),
@@ -609,7 +670,8 @@ export const useLogsData = () => {
         const ss = other.stream_status;
         const isOk = ss.status === 'ok';
         const statusLabel = isOk ? '✓ ' + t('正常') : '✗ ' + t('异常');
-        let streamValue = statusLabel + ' (' + (ss.end_reason || 'unknown') + ')';
+        let streamValue =
+          statusLabel + ' (' + (ss.end_reason || 'unknown') + ')';
         if (ss.error_count > 0) {
           streamValue += ` [${t('软错误')}: ${ss.error_count}]`;
         }
@@ -624,7 +686,14 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('流错误详情'),
             value: (
-              <div style={{ maxWidth: 600, whiteSpace: 'pre-line', wordBreak: 'break-word', lineHeight: 1.6 }}>
+              <div
+                style={{
+                  maxWidth: 600,
+                  whiteSpace: 'pre-line',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
                 {ss.errors.join('\n')}
               </div>
             ),

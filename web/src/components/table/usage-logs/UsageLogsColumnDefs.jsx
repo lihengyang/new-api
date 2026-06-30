@@ -143,10 +143,7 @@ function renderType(type, t) {
 
 function buildStreamStatusTooltip(ss, t) {
   if (!ss) return null;
-  const lines = [
-    t('流状态') + '：' + t('异常'),
-    (ss.end_reason || 'unknown'),
-  ];
+  const lines = [t('流状态') + '：' + t('异常'), ss.end_reason || 'unknown'];
   if (ss.error_count > 0) {
     lines.push(`${t('软错误')}: ${ss.error_count}`);
   }
@@ -184,11 +181,7 @@ function renderIsStream(bool, t, streamStatus) {
                 userSelect: 'none',
               }}
             >
-              <CircleAlert
-                size={14}
-                strokeWidth={2.5}
-                color='currentColor'
-              />
+              <CircleAlert size={14} strokeWidth={2.5} color='currentColor' />
             </span>
           </Tooltip>
         )}
@@ -386,6 +379,44 @@ function getUsageLogGroupSummary(groupRatio, userGroupRatio, t) {
   return `${useUserGroupRatio ? t('专属倍率') : t('分组')} ${formatRatio(ratio)}x`;
 }
 
+function formatSeedAudioSeconds(value) {
+  const duration = Number(value);
+  if (!Number.isFinite(duration) || duration < 0) {
+    return '-';
+  }
+  return `${duration.toFixed(3).replace(/\.?0+$/, '')} s`;
+}
+
+function getSeedAudioUsageLogDetailSummary(record, other, t) {
+  const groupText = getUsageLogGroupSummary(
+    other?.group_ratio,
+    other?.user_group_ratio,
+    t,
+  );
+  const duration = other?.original_duration ?? other?.duration;
+  const actualQuota = other?.actual_quota ?? record?.quota;
+  const referenceMode = other?.reference_mode || '-';
+
+  return {
+    segments: [
+      { text: t('Seed Audio 秒级计费'), tone: 'primary' },
+      groupText ? { text: groupText, tone: 'primary' } : null,
+      {
+        text: `${t('音频时长')}：${formatSeedAudioSeconds(duration)}`,
+        tone: 'secondary',
+      },
+      {
+        text: `${t('扣费')}：${renderQuota(actualQuota, 6)}`,
+        tone: 'secondary',
+      },
+      {
+        text: `${t('参考输入')}：${referenceMode}`,
+        tone: 'secondary',
+      },
+    ].filter(Boolean),
+  };
+}
+
 function renderCompactDetailSummary(summarySegments) {
   const segments = Array.isArray(summarySegments)
     ? summarySegments.filter((segment) => segment?.text)
@@ -434,6 +465,10 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
 
   if (other == null || record.type !== 2) {
     return null;
+  }
+
+  if (other?.seed_audio === true) {
+    return getSeedAudioUsageLogDetailSummary(record, other, t);
   }
 
   if (

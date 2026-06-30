@@ -322,6 +322,7 @@ func TestSeedAudioRecordConsumeLogIsSanitized(t *testing.T) {
 	c := newSeedAudioIdempotencyTestContext()
 	c.Set("username", "relay-task-test-user")
 	c.Set("token_name", "relay-task-test-token")
+	c.Set(common.RequestIdKey, "req_log_visible")
 	info := &relaycommon.RelayInfo{
 		UserId:          1001,
 		TokenId:         501,
@@ -358,6 +359,20 @@ func TestSeedAudioRecordConsumeLogIsSanitized(t *testing.T) {
 	require.Equal(t, true, other["output_url_present"])
 	require.EqualValues(t, 8000, other["actual_quota"])
 	require.EqualValues(t, 3.2, other["original_duration"])
+
+	adminLogs, total, err := model.GetAllLogs(model.LogTypeConsume, 0, 0, "lsf-seed-audio-1.0-tenant-a", "relay-task-test-user", "relay-task-test-token", 0, 10, 0, "", "req_log_visible")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, adminLogs, 1)
+	require.Equal(t, log.Id, adminLogs[0].Id)
+	require.Equal(t, "henrytest", adminLogs[0].Group)
+
+	userLogs, total, err := model.GetUserLogs(1001, model.LogTypeConsume, 0, 0, "lsf-seed-audio-1.0-tenant-a", "relay-task-test-token", 0, 10, "", "req_log_visible")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, userLogs, 1)
+	require.Equal(t, log.Id, userLogs[0].Id)
+	require.Equal(t, "henrytest", userLogs[0].Group)
 
 	combined := log.Content + log.Other
 	require.NotContains(t, combined, "secret customer prompt")

@@ -83,6 +83,17 @@ reference mode, and seconds-based billing metadata. It must not store raw
 prompts, customer reference URLs, temporary output URLs, upstream response
 bodies, ProjectName, X-Api-Key, bearer keys, or audio base64 data.
 
+RC3 usage-log visibility remediation confirms Seed Audio writes the same
+`logs` table through `model.RecordConsumeLog` and is returned by the existing
+admin `/api/log/` and user `/api/log/self` usage-log list APIs. Seed Audio
+consume rows are filterable by model alias, token name, group, and request ID;
+admin logs also retain the normal channel filter path. The usage-log UI renders
+Seed Audio rows as seconds-based billing, showing original-duration usage,
+final quota, reference mode, and present/absent output URL status without
+printing or storing raw prompts, input URLs, temporary URLs, upstream bodies, or
+secrets. Prompt/completion token columns remain zero by design because Seed
+Audio is billed by seconds, not tokens.
+
 `GET /v1/billing/balance` is unchanged. It continues to return token-level
 wallet balance from token quota fields only. Seed Audio can change the balance
 amount through normal precharge and settlement, but it does not change the
