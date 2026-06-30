@@ -200,11 +200,13 @@ func TestSeedAudioResponseExtractionAndReplayRedaction(t *testing.T) {
 		OriginalDuration: 8.25,
 		CreatedAt:        1000,
 		ActualQuota:      10312,
-	})
+	}, "req_cached")
+	require.Equal(t, "req_cached", response.Metadata["client_request_id"])
 	body, err := common.Marshal(response)
 	require.NoError(t, err)
 	bodyString := string(body)
 	require.Contains(t, bodyString, "lsf-seed-audio-1.0-tenant-a")
+	require.Contains(t, bodyString, `"client_request_id":"req_cached"`)
 	require.NotContains(t, bodyString, `"model":"`+seedAudioUpstreamModel+`"`)
 	require.NotContains(t, bodyString, "channel_id")
 	require.NotContains(t, bodyString, "group")
@@ -300,6 +302,69 @@ func TestSeedAudioIdempotencyDBCompletedReplay(t *testing.T) {
 	require.Equal(t, "aud_cached", cached.ResponseID)
 	require.Equal(t, "https://tmp.example.com/audio.mp3", cached.TemporaryURL)
 	require.EqualValues(t, 1234, cached.CreatedAt)
+
+	response := seedAudioResponseFromRecord("lsf-seed-audio-1.0-a", *cached, normalized.ClientRequestID)
+	require.Equal(t, normalized.ClientRequestID, response.Metadata["client_request_id"])
+}
+
+func TestSeedAudioRecordConsumeLogIsSanitized(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Log{}))
+	oldLogConsumeEnabled := common.LogConsumeEnabled
+	oldDataExportEnabled := common.DataExportEnabled
+	common.LogConsumeEnabled = true
+	common.DataExportEnabled = false
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = oldLogConsumeEnabled
+		common.DataExportEnabled = oldDataExportEnabled
+	})
+
+	c := newSeedAudioIdempotencyTestContext()
+	c.Set("username", "relay-task-test-user")
+	c.Set("token_name", "relay-task-test-token")
+	info := &relaycommon.RelayInfo{
+		UserId:          1001,
+		TokenId:         501,
+		OriginModelName: "lsf-seed-audio-1.0-tenant-a",
+		UsingGroup:      "henrytest",
+		StartTime:       time.Now().Add(-2 * time.Second),
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 77},
+	}
+	info.PriceData.GroupRatioInfo.GroupRatio = 2
+
+	seedAudioRecordConsumeLog(c, info, &seedAudioNormalizedRequest{
+		TextPrompt:      "secret customer prompt",
+		ReferenceMode:   "audio_url",
+		ClientRequestID: "req_log",
+	}, &seedAudioUpstreamResult{
+		URL:              "https://tmp.example.com/audio.mp3?token=secret",
+		Duration:         2.8,
+		OriginalDuration: 3.2,
+	}, 8000, 300000)
+
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).First(&log).Error)
+	require.Equal(t, "lsf-seed-audio-1.0-tenant-a", log.ModelName)
+	require.Equal(t, 8000, log.Quota)
+	require.Equal(t, 0, log.PromptTokens)
+	require.Equal(t, 0, log.CompletionTokens)
+
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	require.Equal(t, true, other["seed_audio"])
+	require.Equal(t, "seconds", other["usage_type"])
+	require.Equal(t, "audio_url", other["reference_mode"])
+	require.Equal(t, true, other["client_request_id_present"])
+	require.Equal(t, true, other["output_url_present"])
+	require.EqualValues(t, 8000, other["actual_quota"])
+	require.EqualValues(t, 3.2, other["original_duration"])
+
+	combined := log.Content + log.Other
+	require.NotContains(t, combined, "secret customer prompt")
+	require.NotContains(t, combined, "tmp.example.com")
+	require.NotContains(t, combined, "audio.mp3")
+	require.NotContains(t, combined, "token=secret")
+	require.NotContains(t, combined, "temporary_url")
 }
 
 func TestSeedAudioIdempotencyDBConflictDifferentRequest(t *testing.T) {

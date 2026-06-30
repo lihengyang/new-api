@@ -168,6 +168,34 @@ func TestGetBillingBalanceDoesNotExposeInternalFields(t *testing.T) {
 	}
 }
 
+func TestGetBillingBalanceReflectsTokenQuotaAfterSeedAudioSettlementWithoutSchemaChange(t *testing.T) {
+	router, db := setupBillingBalanceRouter(t)
+	seedBillingBalanceToken(t, db, "balanceseedaudio", 1_000_000, 0, false)
+
+	var token model.Token
+	require.NoError(t, db.Where(&model.Token{Key: "balanceseedaudio"}).First(&token).Error)
+	require.NoError(t, db.Model(&model.Token{}).Where("id = ?", token.Id).Updates(map[string]interface{}{
+		"remain_quota": gorm.Expr("remain_quota - ?", 8000),
+		"used_quota":   gorm.Expr("used_quota + ?", 8000),
+	}).Error)
+
+	recorder := requestBillingBalance(router, "balanceseedaudio")
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response billingBalanceTestResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(t, "billing.balance", response.Object)
+	require.Equal(t, "USD", response.Currency)
+	require.NotNil(t, response.Balance.Available)
+	require.InDelta(t, 1.984, *response.Balance.Available, 0.0000001)
+	require.InDelta(t, 0.016, response.Balance.Used, 0.0000001)
+	body := recorder.Body.String()
+	require.NotContains(t, body, "seed_audio")
+	require.NotContains(t, body, "original_duration")
+	require.NotContains(t, body, "channel_id")
+	require.NotContains(t, body, "model")
+}
+
 func TestGetBillingBalanceAuthErrorsUseTokenAuth(t *testing.T) {
 	router, _ := setupBillingBalanceRouter(t)
 

@@ -163,7 +163,7 @@ func SeedAudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	if cached != nil {
 		seedAudioMetric.idempotencyReplay.Add(1)
-		c.JSON(http.StatusOK, seedAudioResponseFromRecord(audioReq.Model, *cached))
+		c.JSON(http.StatusOK, seedAudioResponseFromRecord(audioReq.Model, *cached, normalized.ClientRequestID))
 		return nil
 	}
 
@@ -216,6 +216,7 @@ func SeedAudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	seedAudioMetric.actualQuota.Add(int64(actualQuota))
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, actualQuota)
 	seedAudioUpdateChannelUsedQuota(c, info.ChannelId, actualQuota)
+	seedAudioRecordConsumeLog(c, info, normalized, result, actualQuota, prechargeQuota)
 
 	now := time.Now()
 	response := dto.SeedAudioResponse{
@@ -916,8 +917,8 @@ func seedAudioFloatValue(value interface{}) (float64, bool) {
 	}
 }
 
-func seedAudioResponseFromRecord(modelName string, record dto.SeedAudioIdempotencyRecord) dto.SeedAudioResponse {
-	return dto.SeedAudioResponse{
+func seedAudioResponseFromRecord(modelName string, record dto.SeedAudioIdempotencyRecord, clientRequestIDs ...string) dto.SeedAudioResponse {
+	response := dto.SeedAudioResponse{
 		ID:               record.ResponseID,
 		Object:           "audio.speech",
 		Created:          record.CreatedAt,
@@ -932,6 +933,64 @@ func seedAudioResponseFromRecord(modelName string, record dto.SeedAudioIdempoten
 			OriginalDuration: record.OriginalDuration,
 		},
 	}
+	if len(clientRequestIDs) > 0 {
+		if clientRequestID := strings.TrimSpace(clientRequestIDs[0]); clientRequestID != "" {
+			response.Metadata = map[string]interface{}{"client_request_id": clientRequestID}
+		}
+	}
+	return response
+}
+
+func seedAudioRecordConsumeLog(c *gin.Context, info *relaycommon.RelayInfo, normalized *seedAudioNormalizedRequest, result *seedAudioUpstreamResult, actualQuota int, prechargeQuota int) {
+	if c == nil || info == nil || normalized == nil || result == nil {
+		return
+	}
+	startTime := info.StartTime
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	useTimeSeconds := int(time.Since(startTime).Seconds())
+	if useTimeSeconds < 0 {
+		useTimeSeconds = 0
+	}
+	requestPath := ""
+	if c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+	other := map[string]interface{}{
+		"request_path":              requestPath,
+		"seed_audio":                true,
+		"usage_type":                "seconds",
+		"reference_mode":            normalized.ReferenceMode,
+		"duration":                  result.Duration,
+		"original_duration":         result.OriginalDuration,
+		"actual_quota":              actualQuota,
+		"pre_consumed_quota":        prechargeQuota,
+		"base_quota_per_second":     seedAudioBaseQuotaPerSecond,
+		"group_ratio":               info.PriceData.GroupRatioInfo.GroupRatio,
+		"client_request_id_present": normalized.ClientRequestID != "",
+		"output_url_present":        result.URL != "",
+		"url_expires_seconds":       int(seedAudioURLTTL.Seconds()),
+	}
+	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
+		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
+	}
+	if info.BillingSource != "" {
+		other["billing_source"] = info.BillingSource
+	}
+	content := fmt.Sprintf("Seed Audio usage settled: original_duration=%.3fs, actual_quota=%d", result.OriginalDuration, actualQuota)
+	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+		ChannelId:      info.ChannelId,
+		ModelName:      info.OriginModelName,
+		TokenName:      c.GetString("token_name"),
+		Quota:          actualQuota,
+		Content:        content,
+		TokenId:        info.TokenId,
+		UseTimeSeconds: useTimeSeconds,
+		IsStream:       false,
+		Group:          info.UsingGroup,
+		Other:          other,
+	})
 }
 
 func seedAudioUpdateChannelUsedQuota(c *gin.Context, channelID int, quota int) {

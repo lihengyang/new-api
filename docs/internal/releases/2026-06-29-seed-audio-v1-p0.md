@@ -68,6 +68,26 @@ Expired cached results return `idempotency_result_expired` until the tombstone
 window expires. If `client_request_id` is omitted, the request proceeds without
 idempotency.
 
+RC3 local remediation preserves `metadata.client_request_id` on completed
+idempotency replay responses. Replay still returns the cached Seed Audio result
+and must not bill again or dispatch upstream again.
+
+## Usage Logs
+
+Seed Audio is synchronous and does not create video tasks. Empty task logs are
+therefore expected for `/v1/audio/speech`.
+
+Successful Seed Audio settlement writes one sanitized consume log entry with
+the tenant-facing alias, quota, duration/original duration, request path,
+reference mode, and seconds-based billing metadata. It must not store raw
+prompts, customer reference URLs, temporary output URLs, upstream response
+bodies, ProjectName, X-Api-Key, bearer keys, or audio base64 data.
+
+`GET /v1/billing/balance` is unchanged. It continues to return token-level
+wallet balance from token quota fields only. Seed Audio can change the balance
+amount through normal precharge and settlement, but it does not change the
+balance endpoint route, controller, schema, or channel independence.
+
 ## Upstream
 
 Seed Audio sends one POST request to:
@@ -112,6 +132,14 @@ Executed locally on 2026-06-30 for DB-backed Seed Audio idempotency:
 
 - `go test ./model -run 'TestSeedAudio|TestCreateSeedAudio|TestCompleteSeedAudio|TestFailSeedAudio|TestReclaimSeedAudio' -count=1`
 - `go test ./relay -run 'TestSeedAudio' -count=1`
+- `go test ./model ./controller ./dto ./relay -count=1`
+- `git diff --check`
+
+Executed locally on 2026-07-01 for RC3 replay metadata, usage log, and balance
+regression remediation:
+
+- `go test ./relay -run 'TestSeedAudio' -count=1`
+- `go test ./controller -run 'TestGetBillingBalance' -count=1`
 - `go test ./model ./controller ./dto ./relay -count=1`
 - `git diff --check`
 
