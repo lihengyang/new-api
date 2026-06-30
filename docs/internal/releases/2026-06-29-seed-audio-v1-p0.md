@@ -47,13 +47,26 @@ Insufficient balance uses HTTP 402 with code `seed_audio_precharge_required`.
 
 ## Idempotency
 
-Seed Audio supports `metadata.client_request_id` with Redis TTL 2h.
+Seed Audio supports `metadata.client_request_id` with DB-backed idempotency.
+Redis is not required for Seed Audio P0.
 
-Key shape: `seed_audio:idemp:{token_id}:{client_request_id}`.
+State is stored in the `seed_audio_idempotencies` table with a unique key on
+`token_id` + `client_request_id`. The table is migrated through GORM and must
+remain compatible with MySQL, PostgreSQL, and SQLite.
 
-Stored values contain sanitized metadata only: request HMAC, status, LSF audio ID, X-Tt-Logid, temporary URL, URL expiry, durations, actual quota, and timestamps. The HMAC is computed with the server-side crypto secret; raw prompts, customer reference URLs, ProjectName, X-Api-Key, channel keys, bearer keys, and raw upstream JSON are not stored.
+Stored values contain sanitized metadata only: request HMAC, status, LSF audio
+ID, X-Tt-Logid, temporary URL, URL expiry, durations, actual quota, expiry
+timestamps, and sanitized error code/status. The HMAC is computed with the
+server-side crypto secret; raw prompts, customer reference URLs, ProjectName,
+X-Api-Key, channel keys, bearer keys, and raw upstream JSON are not stored.
 
-If Redis is unavailable and `client_request_id` is present, the request fails closed before upstream dispatch. If `client_request_id` is omitted, the request proceeds without idempotency.
+When `client_request_id` is present, a DB pending record is created before
+billing and upstream dispatch. A duplicate completed request returns the cached
+Seed Audio response, a duplicate pending request returns `idempotency_in_progress`,
+and a duplicate failed request asks the client to use a new `client_request_id`.
+Expired cached results return `idempotency_result_expired` until the tombstone
+window expires. If `client_request_id` is omitted, the request proceeds without
+idempotency.
 
 ## Upstream
 
@@ -95,6 +108,13 @@ Executed locally on 2026-06-29:
 
 The first broader package run inside the sandbox hit the known listener restriction for existing `httptest.NewServer` tests. The same package test command passed outside the sandbox.
 
+Executed locally on 2026-06-30 for DB-backed Seed Audio idempotency:
+
+- `go test ./model -run 'TestSeedAudio|TestCreateSeedAudio|TestCompleteSeedAudio|TestFailSeedAudio|TestReclaimSeedAudio' -count=1`
+- `go test ./relay -run 'TestSeedAudio' -count=1`
+- `go test ./model ./controller ./dto ./relay -count=1`
+- `git diff --check`
+
 ## Preflight Checklist
 
 Before any preflight or production use:
@@ -102,7 +122,8 @@ Before any preflight or production use:
 - Create a dedicated Seed Audio channel per tenant with the BytePlus Seed Speech ProjectName and X-Api-Key configured admin-side only.
 - Map only tenant aliases such as `lsf-seed-audio-1.0-<tenant>` to the Seed Audio channel.
 - Use a dedicated Seed Audio group/token; do not reuse Seedance video pricing groups.
-- Confirm Redis is available before enabling `metadata.client_request_id`.
+- Confirm the `seed_audio_idempotencies` table exists with a unique index on
+  `token_id` + `client_request_id` before enabling `metadata.client_request_id`.
 - Run one unpaid validation-only smoke first.
 - Run any paid upstream smoke only after explicit approval and with sensitive parameters supplied via approved secret handling.
 - Do not update customer documentation until separately approved.
