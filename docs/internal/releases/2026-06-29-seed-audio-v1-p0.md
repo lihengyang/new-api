@@ -104,8 +104,39 @@ Henry manually confirmed the RC3 preflight Usage Logs UI on 2026-07-01:
 - charge: `$0.016400`
 - reference input: `text_only`
 - empty task log is expected for synchronous `/v1/audio/speech`
-- `audio_url` and `image_url` smoke tests have not been run
+- URL reference smoke tests had not yet been run at the time of this UI check
 - production was not touched
+
+Phase 4 URL reference smoke status on 2026-07-01:
+
+- `image_url` smoke on RC3: PASS
+- `image_url` original duration: `3.2s`
+- `image_url` group ratio: `2.0000x`
+- `image_url` charge: `$0.016000`
+- `image_url` replay did not duplicate charge
+- `image_url` usage-log success count: `1`
+- `audio_url` initial smoke on RC3 failed safely with HTTP 503
+  `seed_audio_upstream_error`
+- `audio_url` balance delta: `$0`
+- `audio_url` used one upstream attempt only; no retry was performed
+- local audit verified `audio_url` request mapping to upstream
+  `references[].audio_url`
+- local audit verified `image_url` request mapping remains upstream
+  `references[].image_url`
+- local audit verified text prompts such as `@Audio1` are preserved and not
+  rewritten
+- local fix `b6979703ca40a4560c9888c3fe90da5dadbb54c4` classifies
+  audio/media resource download or access failures as HTTP 400
+  `invalid_reference_url`
+- generic upstream or server failures remain `seed_audio_upstream_error`
+- no raw reference URLs, raw upstream bodies, prompts, X-Api-Key values, bearer
+  keys, ProjectName values, or customer data were printed or stored as part of
+  the fix evidence
+- `audio_url` smoke remains pending after an RC4 redeploy
+- no deploy, push, paid smoke, `/v1/audio/speech` request, or BytePlus call was
+  performed after the local fix
+- production, `new-api-nightly`, and `new-api-staging` were not touched
+- customer documentation was not updated
 
 `GET /v1/billing/balance` is unchanged. It continues to return token-level
 wallet balance from token quota fields only. Seed Audio can change the balance
