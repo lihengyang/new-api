@@ -186,6 +186,28 @@ the new rollback artifact:
   rollback checks are complete.
 - Do not print or save GitHub tokens or production secrets.
 
+## Gate 1A-0 Build-only Result
+
+Gate 1A-0 build-only completed on the Mac mini local Docker Desktop. No
+production deploy or runtime mutation was performed.
+
+- Built image tag: `new-api:seed-audio-p0-prod-20260702-303d4ea`
+- Image ID:
+  `sha256:de16a79e83920990eb351aaaa7e4c86c9e634d3281957ac25a4cd9c3e043cd1d`
+- Platform: `linux/amd64`
+- Revision label: `303d4ea3efa0a3317a22d4232348bf623a9228f8`
+- Source label: `feature/seed-audio-v1`
+- Build source commit frozen at:
+  `303d4ea3efa0a3317a22d4232348bf623a9228f8`
+- Current docs HEAD after build restored to:
+  `1e0a0c10366b6450d5bbd60bb554d21780174fdd`
+- Working tree: clean
+- Candidate image currently exists in Mac mini Docker Desktop only. Gate 1A-1
+  must explicitly approve the production server image transfer/load or
+  server-side build path before deploy.
+- No deploy, production mutation, smoke, BytePlus call, restart, container
+  replacement, DB mutation, or `/v1/audio/speech` request occurred.
+
 ## Product Boundary
 
 Seed Audio 1.0 is implemented as a separate LSF audio product family on the existing `/v1/audio/speech` endpoint. The Seed Audio path is selected only when the customer model alias starts with `lsf-seed-audio-1.0`. Normal audio speech models continue through the existing relay path.
