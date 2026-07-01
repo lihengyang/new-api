@@ -829,16 +829,35 @@ func seedAudioUpstreamStatusError(statusCode int, responseBody []byte) *types.Ne
 }
 
 func seedAudioLooksLikeReferenceFetchError(body string) bool {
-	hasURL := strings.Contains(body, "url") || strings.Contains(body, "reference")
-	hasFetchFailure := strings.Contains(body, "fetch") ||
+	hasExplicitReferenceURL := strings.Contains(body, "url") || strings.Contains(body, "reference")
+	hasReferenceMedia := strings.Contains(body, "audio") ||
+		strings.Contains(body, "image") ||
+		strings.Contains(body, "media") ||
+		strings.Contains(body, "resource") ||
+		strings.Contains(body, "file")
+	hasFetchAccessFailure := strings.Contains(body, "fetch") ||
 		strings.Contains(body, "download") ||
 		strings.Contains(body, "access") ||
 		strings.Contains(body, "inaccessible") ||
-		strings.Contains(body, "invalid") ||
 		strings.Contains(body, "not found") ||
 		strings.Contains(body, "403") ||
-		strings.Contains(body, "404")
-	return hasURL && hasFetchFailure
+		strings.Contains(body, "404") ||
+		strings.Contains(body, "forbidden") ||
+		strings.Contains(body, "permission denied") ||
+		strings.Contains(body, "unreachable") ||
+		strings.Contains(body, "connect") ||
+		strings.Contains(body, "resolve") ||
+		strings.Contains(body, "dns") ||
+		strings.Contains(body, "tls") ||
+		strings.Contains(body, "ssl")
+	hasInvalidURLFailure := strings.Contains(body, "invalid") ||
+		strings.Contains(body, "unsupported")
+	hasReferenceTimeout := strings.Contains(body, "timeout") ||
+		strings.Contains(body, "timed out")
+	if hasExplicitReferenceURL && (hasFetchAccessFailure || hasInvalidURLFailure || hasReferenceTimeout) {
+		return true
+	}
+	return hasReferenceMedia && hasFetchAccessFailure
 }
 
 func seedAudioFindStringField(value interface{}, keys ...string) string {

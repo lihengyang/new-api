@@ -49,7 +49,15 @@ func TestSeedAudioNormalizePreservesZeroAudioConfig(t *testing.T) {
 	require.Equal(t, 0.0, *normalized.LoudnessRate)
 	require.Equal(t, 0.0, *normalized.PitchRate)
 
-	upstreamBody, err := common.Marshal(normalized.toUpstreamRequest())
+	upstreamReq := normalized.toUpstreamRequest()
+	require.Equal(t, "hello", upstreamReq.TextPrompt)
+	require.Len(t, upstreamReq.References, 2)
+	require.Equal(t, "https://cdn.example.com/a.wav", upstreamReq.References[0].AudioURL)
+	require.Empty(t, upstreamReq.References[0].ImageURL)
+	require.Equal(t, "https://cdn.example.com/b.wav", upstreamReq.References[1].AudioURL)
+	require.Empty(t, upstreamReq.References[1].ImageURL)
+
+	upstreamBody, err := common.Marshal(upstreamReq)
 	require.NoError(t, err)
 	upstreamJSON := string(upstreamBody)
 	require.Contains(t, upstreamJSON, `"model":"seed-audio-1.0"`)
@@ -57,6 +65,80 @@ func TestSeedAudioNormalizePreservesZeroAudioConfig(t *testing.T) {
 	require.Contains(t, upstreamJSON, `"speech_rate":0`)
 	require.Contains(t, upstreamJSON, `"loudness_rate":0`)
 	require.Contains(t, upstreamJSON, `"pitch_rate":0`)
+}
+
+func TestSeedAudioUpstreamReferenceMapping(t *testing.T) {
+	audioReq, audioBody := seedAudioTestRequest(t, `{
+		"model":"lsf-seed-audio-1.0-tenant-a",
+		"input":"Please match @Audio1",
+		"metadata":{"references":[{"type":"audio_url","url":"https://cdn.example.com/reference.mp3"}]}
+	}`)
+	normalizedAudio, apiErr := buildSeedAudioNormalizedRequest(audioReq, audioBody)
+	require.Nil(t, apiErr)
+	upstreamAudio := normalizedAudio.toUpstreamRequest()
+	require.Equal(t, "Please match @Audio1", upstreamAudio.TextPrompt)
+	require.Len(t, upstreamAudio.References, 1)
+	require.Equal(t, "https://cdn.example.com/reference.mp3", upstreamAudio.References[0].AudioURL)
+	require.Empty(t, upstreamAudio.References[0].ImageURL)
+
+	imageReq, imageBody := seedAudioTestRequest(t, `{
+		"model":"lsf-seed-audio-1.0-tenant-a",
+		"input":"Please match image style",
+		"metadata":{"references":[{"type":"image_url","url":"https://cdn.example.com/reference.png"}]}
+	}`)
+	normalizedImage, apiErr := buildSeedAudioNormalizedRequest(imageReq, imageBody)
+	require.Nil(t, apiErr)
+	upstreamImage := normalizedImage.toUpstreamRequest()
+	require.Equal(t, "Please match image style", upstreamImage.TextPrompt)
+	require.Len(t, upstreamImage.References, 1)
+	require.Empty(t, upstreamImage.References[0].AudioURL)
+	require.Equal(t, "https://cdn.example.com/reference.png", upstreamImage.References[0].ImageURL)
+}
+
+func TestSeedAudioUpstreamReferenceFetchErrorsMapToInvalidReferenceURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{
+			name:       "explicit url download failure",
+			statusCode: http.StatusServiceUnavailable,
+			body:       `{"error":{"message":"failed to download url"}}`,
+		},
+		{
+			name:       "audio resource download failure",
+			statusCode: http.StatusServiceUnavailable,
+			body:       `{"error":{"message":"failed to download audio resource"}}`,
+		},
+		{
+			name:       "media access forbidden",
+			statusCode: http.StatusBadRequest,
+			body:       `{"error":{"message":"cannot fetch media: forbidden"}}`,
+		},
+		{
+			name:       "reference timeout",
+			statusCode: http.StatusGatewayTimeout,
+			body:       `{"error":{"message":"reference fetch timed out"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			apiErr := seedAudioUpstreamStatusError(tt.statusCode, []byte(tt.body))
+			require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			require.Equal(t, "invalid_reference_url", apiErr.ToOpenAIError().Code)
+		})
+	}
+}
+
+func TestSeedAudioUpstreamServiceErrorsRemainUpstreamError(t *testing.T) {
+	apiErr := seedAudioUpstreamStatusError(http.StatusServiceUnavailable, []byte(`{"error":{"message":"upstream overloaded"}}`))
+	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	require.Equal(t, "seed_audio_upstream_error", apiErr.ToOpenAIError().Code)
+
+	apiErr = seedAudioUpstreamStatusError(http.StatusBadRequest, []byte(`{"error":{"message":"invalid audio_config format"}}`))
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, "seed_audio_upstream_error", apiErr.ToOpenAIError().Code)
 }
 
 func TestSeedAudioValidationRejectsP0ExcludedInputs(t *testing.T) {
