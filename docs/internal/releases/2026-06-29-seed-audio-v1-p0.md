@@ -14,6 +14,36 @@ Status: `PREFLIGHT_FUNCTIONAL_PASSED / PRODUCTION_NOT_DEPLOYED`
 - Production, `new-api-nightly`, and `new-api-staging` were not touched
 - Customer documentation was not updated
 
+## Production Gate 0 Read-only Reconnaissance
+
+Henry approved Gate 0 read-only production reconnaissance only. No production
+mutation was performed.
+
+- Production container: `new-api-nightly`
+- Production current image: `new-api:seedance-mini-billing-scheme-b-rc1`
+- Production image revision:
+  `9ef110f928f40a88bf426432db08807b9edf89cb`
+- Runtime state: `running=true`, `restarting=false`, restart count `0`
+- Local `/api/status`: HTTP `200`
+- Docker healthcheck field: none configured
+- Network mode: `host`
+- Existing older rollback container/image observed:
+  `new-api-nightly-before-seedance-mini-billing-scheme-b-20260628T030527Z`
+  using image `new-api:seedance-mini-rc1`
+- Important rollback caveat: before any Seed Audio production deploy, preserve
+  the current production image `new-api:seedance-mini-billing-scheme-b-rc1` as
+  the new rollback artifact.
+- DB connection string: present but redacted
+- `DATABASE` flag: did not print a concrete value
+- Remote TCP/3306 connections observed from the production app container:
+  `2` total, `1` established
+- DB shape is consistent with the MySQL baseline, but Gate 1 should perform a
+  stronger sanitized MySQL-shape check before any approved AutoMigrate.
+- Preflight remains separate: `new-api-preflight` runs
+  `new-api:seed-audio-p0-rc4`
+- No deploy, restart, DB mutation, smoke, `/v1/audio/speech` request, BytePlus
+  call, env dump, log dump, or secret export occurred.
+
 ## Product Boundary
 
 Seed Audio 1.0 is implemented as a separate LSF audio product family on the existing `/v1/audio/speech` endpoint. The Seed Audio path is selected only when the customer model alias starts with `lsf-seed-audio-1.0`. Normal audio speech models continue through the existing relay path.
