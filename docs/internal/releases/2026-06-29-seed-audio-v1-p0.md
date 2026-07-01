@@ -94,6 +94,19 @@ printing or storing raw prompts, input URLs, temporary URLs, upstream bodies, or
 secrets. Prompt/completion token columns remain zero by design because Seed
 Audio is billed by seconds, not tokens.
 
+Henry manually confirmed the RC3 preflight Usage Logs UI on 2026-07-01:
+
+- usage-log visibility: PASS
+- UI display: Seed Audio seconds-based billing
+- model alias: `lsf-seed-audio-1.0-henrytest`
+- group ratio: `2.0000x`
+- original duration: `3.28s`
+- charge: `$0.016400`
+- reference input: `text_only`
+- empty task log is expected for synchronous `/v1/audio/speech`
+- `audio_url` and `image_url` smoke tests have not been run
+- production was not touched
+
 `GET /v1/billing/balance` is unchanged. It continues to return token-level
 wallet balance from token quota fields only. Seed Audio can change the balance
 amount through normal precharge and settlement, but it does not change the
