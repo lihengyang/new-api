@@ -2,7 +2,17 @@
 
 Date: 2026-06-29
 Scope: local branch `feature/seed-audio-v1`
-Status: local implementation and targeted package tests only; no preflight, production, deploy, or push.
+Status: `PREFLIGHT_FUNCTIONAL_PASSED / PRODUCTION_NOT_DEPLOYED`
+
+## Current Status Summary
+
+- Preflight image: `new-api:seed-audio-p0-rc4`
+- P0 functional modes passed in preflight: `text_only`, `image_url`, and
+  `audio_url`
+- DB-backed idempotency passed
+- Usage logs passed
+- Production, `new-api-nightly`, and `new-api-staging` were not touched
+- Customer documentation was not updated
 
 ## Product Boundary
 
