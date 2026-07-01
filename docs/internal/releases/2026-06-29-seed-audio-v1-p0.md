@@ -52,22 +52,29 @@ approved until Henry explicitly approves the relevant gate.
 ### Release Identity
 
 - Approved source commit:
-  `34d276c3dca72557f83334f51c47cf32cb2bb6f8`
+  `303d4ea3efa0a3317a22d4232348bf623a9228f8`
 - Last code-changing commit:
   `b6979703ca40a4560c9888c3fe90da5dadbb54c4`
+- `34d276c` was superseded by docs-only HEAD `303d4ea` for release
+  traceability; last code-changing commit remains
+  `b6979703ca40a4560c9888c3fe90da5dadbb54c4`.
 - Preflight equivalent image: `new-api:seed-audio-p0-rc4`
 - Recommended production candidate image tag:
-  `new-api:seed-audio-p0-prod-20260702-34d276c`
+  `new-api:seed-audio-p0-prod-20260702-303d4ea`
 - Production image labels must record source revision:
-  `34d276c3dca72557f83334f51c47cf32cb2bb6f8`
+  `303d4ea3efa0a3317a22d4232348bf623a9228f8`
 
 ### Gate Split
 
-- Gate 1A: production deploy and MySQL AutoMigrate only
+- Gate 1A-0: build-only if the candidate image is missing; this requires
+  explicit Henry approval and is separate from deploy.
+- Gate 1A-1: production deploy and MySQL AutoMigrate only.
 - Gate 1B: validation-only smoke
 - Gate 1C: `text_only` paid smoke
 - `audio_url` and `image_url` are second-batch production validation and
   require separate approval.
+- If the candidate image is missing, Gate 1A must not proceed unless Henry
+  explicitly approves build.
 
 ### Gate 1A Approval Requirements
 
