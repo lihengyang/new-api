@@ -44,6 +44,141 @@ mutation was performed.
 - No deploy, restart, DB mutation, smoke, `/v1/audio/speech` request, BytePlus
   call, env dump, log dump, or secret export occurred.
 
+## Gate 1 Production Deploy Runbook
+
+This runbook is documentation only. Seed Audio production deploy is not
+approved until Henry explicitly approves the relevant gate.
+
+### Release Identity
+
+- Approved source commit:
+  `34d276c3dca72557f83334f51c47cf32cb2bb6f8`
+- Last code-changing commit:
+  `b6979703ca40a4560c9888c3fe90da5dadbb54c4`
+- Preflight equivalent image: `new-api:seed-audio-p0-rc4`
+- Recommended production candidate image tag:
+  `new-api:seed-audio-p0-prod-20260702-34d276c`
+- Production image labels must record source revision:
+  `34d276c3dca72557f83334f51c47cf32cb2bb6f8`
+
+### Gate Split
+
+- Gate 1A: production deploy and MySQL AutoMigrate only
+- Gate 1B: validation-only smoke
+- Gate 1C: `text_only` paid smoke
+- `audio_url` and `image_url` are second-batch production validation and
+  require separate approval.
+
+### Gate 1A Approval Requirements
+
+- Henry must explicitly approve production deploy.
+- Henry must explicitly approve production MySQL AutoMigrate for:
+  - `seed_audio_idempotencies`
+  - unique index on `token_id + client_request_id`
+- Henry must confirm production UI/config is ready:
+  - channel
+  - `X-Api-Key`
+  - group
+  - token
+  - tenant-facing Seed Audio alias
+- Codex must not read, print, infer, export, or store secrets.
+
+### Stronger Sanitized MySQL-shape Check
+
+Gate 1A must produce PASS/FAIL style output only:
+
+- `SQL_DSN_PRESENT=true`
+- `SQL_DSN_MYSQL_TCP_SHAPE=true`
+- `MYSQL_3306_ESTABLISHED_COUNT>=1`
+- `DATABASE_FLAG_MYSQL_OR_EMPTY_ACCEPTED_WITH_TCP_SHAPE=true`
+
+Do not print host, username, password, database name, SQL_DSN, env dump, DB
+dump, or customer data.
+
+### Rollback Preservation
+
+Before replacing `new-api-nightly`, preserve the current production runtime as
+the new rollback artifact:
+
+- Current production image: `new-api:seedance-mini-billing-scheme-b-rc1`
+- Preserve image ID and revision in sanitized form.
+- Preserve container config shape:
+  - ports
+  - volumes
+  - env key presence only
+  - labels
+  - command
+  - entrypoint
+  - restart policy
+  - network mode
+- Do not delete old rollback containers or images.
+- Rollback restores runtime image/container only.
+- Rollback must not drop `seed_audio_idempotencies` or its unique index.
+
+### Deploy Scope
+
+- Replace only `new-api-nightly`.
+- Do not touch `new-api-preflight`, `new-api-staging`, DB containers, nginx, or
+  unrelated services.
+- Preserve existing runtime settings unless Henry explicitly approves a change.
+
+### Post-deploy Health and Schema Checks
+
+- Container name: `new-api-nightly`
+- Image tag and revision match approved candidate.
+- `running=true`
+- `restarting=false`
+- Restart count `0`
+- `/api/status` HTTP `200`
+- `seed_audio_idempotencies` table exists.
+- Unique index exists on `token_id + client_request_id`.
+- All verification output must be sanitized.
+
+### Validation-only Smoke Plan
+
+- Not part of Gate 1A.
+- Only allowed after separate Gate 1B approval.
+- One intentionally invalid `/v1/audio/speech` request may be used only after
+  approval.
+- Must reject before upstream dispatch and billing.
+- Verify no balance change and no usage-log charge.
+
+### Paid text_only Smoke Plan
+
+- Not part of Gate 1A or Gate 1B.
+- Only allowed after separate Gate 1C approval.
+- One `text_only` paid smoke only.
+- Record balance before/after, `original_duration`, expected quota, actual
+  delta, replay no duplicate charge, and usage log sanitization.
+- Do not run `audio_url` or `image_url` in this gate.
+
+### Fail-stop Conditions
+
+- Candidate image revision mismatch.
+- Production DB target shape not confirmed as MySQL.
+- Missing AutoMigrate approval.
+- Schema verification fails.
+- Container not running, restart loop, or restart count increments
+  unexpectedly.
+- `/api/status` not HTTP `200`.
+- Validation-only bills or calls upstream.
+- Paid smoke billing delta mismatch.
+- Replay duplicates charge, upstream call, or consume log.
+- Usage logs expose raw prompt, raw input URL, temporary output URL, upstream
+  body, ProjectName, API key, bearer key, SQL_DSN, or customer data.
+- Any secret-handling boundary violation.
+
+### Post-pass Docs and Cleanup
+
+- After production pass, update internal release note only.
+- Customer docs remain blocked until Henry explicitly approves publication.
+- Keep rollback artifact through the rollback window.
+- After Henry approves rollback-window closure, clean temporary SSH key
+  material and release-only temp files.
+- Do not logout or break GitHub auth before required release documentation and
+  rollback checks are complete.
+- Do not print or save GitHub tokens or production secrets.
+
 ## Product Boundary
 
 Seed Audio 1.0 is implemented as a separate LSF audio product family on the existing `/v1/audio/speech` endpoint. The Seed Audio path is selected only when the customer model alias starts with `lsf-seed-audio-1.0`. Normal audio speech models continue through the existing relay path.
