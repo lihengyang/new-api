@@ -132,10 +132,41 @@ Phase 4 URL reference smoke status on 2026-07-01:
 - no raw reference URLs, raw upstream bodies, prompts, X-Api-Key values, bearer
   keys, ProjectName values, or customer data were printed or stored as part of
   the fix evidence
-- `audio_url` smoke remains pending after an RC4 redeploy
+- `audio_url` smoke remained pending until RC4 redeploy and Phase 4R retry
 - no deploy, push, paid smoke, `/v1/audio/speech` request, or BytePlus call was
   performed after the local fix
 - production, `new-api-nightly`, and `new-api-staging` were not touched
+- customer documentation was not updated
+
+Phase 4R `audio_url` retry status on 2026-07-01:
+
+- preflight image: `new-api:seed-audio-p0-rc4`
+- `audio_url` retry using a public HTTPS MP3 reference: PASS
+- `audio_url` original duration: `3.83s`
+- `audio_url` group ratio: `2.0000x`
+- `audio_url` actual quota: `9575`
+- `audio_url` charge / balance delta: `$0.019150`
+- billing matched formula:
+  `floor(original_duration * 1250 * group_ratio)`
+- replay idempotency: PASS
+- replay returned the same response ID
+- replay preserved matching `metadata.client_request_id`
+- replay did not duplicate charge
+- usage-log visibility: PASS
+- `audio_url` usage-log count: `1`
+- duplicate replay usage log: no
+- raw reference URL and temporary output URL were not printed
+- the previous samplelib `audio_url` smoke failure was safe: HTTP 503
+  `seed_audio_upstream_error`, zero balance delta, and no retry
+- RC4 includes local fix `b6979703ca40a4560c9888c3fe90da5dadbb54c4`,
+  which maps audio/media resource download or access failures to HTTP 400
+  `invalid_reference_url`
+- all P0 reference modes have now been validated in preflight:
+  `text_only`, `image_url`, and `audio_url`
+- base64 `audio_data` and `image_data` remain unsupported in P0
+- production, `new-api-nightly`, and `new-api-staging` were not touched
+- no push, deploy, paid smoke, `/v1/audio/speech` request, or BytePlus call was
+  performed after this documentation update
 - customer documentation was not updated
 
 `GET /v1/billing/balance` is unchanged. It continues to return token-level
