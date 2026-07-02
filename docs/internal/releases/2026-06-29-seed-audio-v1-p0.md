@@ -233,6 +233,34 @@ Gate 1A-1 production deploy: `PASS`.
 - No validation-only smoke, paid smoke, BytePlus call,
   `/v1/audio/speech` request, or customer docs update occurred.
 
+## Gate 1B Production Validation-only Result
+
+Gate 1B validation-only: `PASS`.
+
+- Production base URL: `https://ai-api.lightspeedfuture.com`
+- Model alias: `lsf-seed-audio-1.0-henrytest`
+- `client_request_id`: `prod-seed-audio-val-only-20260702T081301Z`
+- Balance before: HTTP `200`
+- Balance before available USD: `20.503778`
+- Intentionally invalid `/v1/audio/speech`: HTTP `400`
+- Error type: `invalid_request_error`
+- Error param: `audio_data`
+- Error code: `invalid_request_error`
+- Sanitized error message:
+  `audio_data is not supported for Seed Audio P0`
+- Balance after: HTTP `200`
+- Balance after available USD: `20.503778`
+- Balance delta: `0`
+- No paid smoke occurred.
+- No audio was generated.
+- No token was printed.
+- No audio, base64, or output URL was printed.
+- Customer docs were not updated.
+
+The selected validation case was `metadata.audio_data`, a P0-forbidden field.
+This validates local rejection before paid generation. Gate 1C `text_only`
+paid smoke remains blocked until Henry separately approves it.
+
 ## Product Boundary
 
 Seed Audio 1.0 is implemented as a separate LSF audio product family on the existing `/v1/audio/speech` endpoint. The Seed Audio path is selected only when the customer model alias starts with `lsf-seed-audio-1.0`. Normal audio speech models continue through the existing relay path.
