@@ -261,6 +261,54 @@ The selected validation case was `metadata.audio_data`, a P0-forbidden field.
 This validates local rejection before paid generation. Gate 1C `text_only`
 paid smoke remains blocked until Henry separately approves it.
 
+## Gate 1C Production text_only Paid Smoke Result
+
+Gate 1C `text_only` paid smoke: `PASS`.
+
+- Production base URL: `https://ai-api.lightspeedfuture.com`
+- Model alias: `lsf-seed-audio-1.0-henrytest`
+- Group ratio: `2`
+- `client_request_id`: `prod-seed-audio-textonly-20260702T083310Z`
+- Balance before: HTTP `200`
+- Balance before available USD: `20.503778`
+- `/v1/audio/speech`: HTTP `200`
+- Object: `audio.speech`
+- Response model: `lsf-seed-audio-1.0-henrytest`
+- Duration: `4.08`
+- Original duration: `4.08`
+- Output URL present: `true`; value not printed.
+- Audio base64 present: `false`
+- Balance after: HTTP `200`
+- Balance after available USD: `20.483378`
+- Initial balance delta: `0.020400`
+- Expected quota: `10200`
+- Expected USD: `0.0204`
+- Billing match with tolerance: `true`
+- Replay: HTTP `200`
+- Replay same response ID: `true`
+- Balance after replay: HTTP `200`
+- Balance after replay available USD: `20.483378`
+- Replay balance delta: `0.000000`
+- Replay no duplicate charge: `true`
+- No `audio_url` or `image_url` mode was tested.
+- No token was printed.
+- No audio URL value was printed.
+- No audio base64 was printed.
+- Customer docs were not updated.
+
+A prior Gate 1C attempt with `voice=alloy` was locally rejected with HTTP `400`
+before billing or upstream dispatch because Seed Audio P0 does not support
+`voice`. That prior attempt had balance delta `0` and no paid generation. The
+successful retry removed `voice`.
+
+Gate status:
+
+- Gate 1A-1 production deploy: `PASS`
+- Gate 1B validation-only: `PASS`
+- Gate 1C `text_only` paid smoke: `PASS`
+- `audio_url` and `image_url` production validation remain second-batch and
+  were not run.
+
 ## Product Boundary
 
 Seed Audio 1.0 is implemented as a separate LSF audio product family on the existing `/v1/audio/speech` endpoint. The Seed Audio path is selected only when the customer model alias starts with `lsf-seed-audio-1.0`. Normal audio speech models continue through the existing relay path.
