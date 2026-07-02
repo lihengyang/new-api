@@ -208,6 +208,31 @@ production deploy or runtime mutation was performed.
 - No deploy, production mutation, smoke, BytePlus call, restart, container
   replacement, DB mutation, or `/v1/audio/speech` request occurred.
 
+## Gate 1A-1 Production Deploy Result
+
+Gate 1A-1 production deploy: `PASS`.
+
+- Production image tag: `new-api:seed-audio-p0-prod-20260702-303d4ea`
+- Image ID:
+  `sha256:de16a79e83920990eb351aaaa7e4c86c9e634d3281957ac25a4cd9c3e043cd1d`
+- Revision label: `303d4ea3efa0a3317a22d4232348bf623a9228f8`
+- Runtime state: `running=true`, `restarting=false`, `restart_count=0`
+- `/api/status`: HTTP `200`
+- Rollback artifact:
+  `new-api-nightly-before-seed-audio-p0-gate1a1-20260702T071625Z`
+- Rollback image: `new-api:seedance-mini-billing-scheme-b-rc1`
+- `SQL_DSN_PRESENT=true`
+- `SQL_DSN_MYSQL_TCP_SHAPE=true`
+- `MYSQL_3306_ESTABLISHED_COUNT>=1=true`
+- `DATABASE_FLAG_MYSQL_OR_EMPTY_ACCEPTED_WITH_TCP_SHAPE=true`
+- `SEED_AUDIO_IDEMPOTENCIES_TABLE=true`
+- `SEED_AUDIO_IDEMPOTENCIES_UNIQUE_TOKEN_CLIENT=true`
+- `SCHEMA_VERIFICATION=PASS`
+- `new-api-preflight` remained `new-api:seed-audio-p0-rc4`
+- `new-api-staging` unchanged
+- No validation-only smoke, paid smoke, BytePlus call,
+  `/v1/audio/speech` request, or customer docs update occurred.
+
 ## Product Boundary
 
 Seed Audio 1.0 is implemented as a separate LSF audio product family on the existing `/v1/audio/speech` endpoint. The Seed Audio path is selected only when the customer model alias starts with `lsf-seed-audio-1.0`. Normal audio speech models continue through the existing relay path.
