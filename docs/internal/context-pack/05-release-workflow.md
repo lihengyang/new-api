@@ -55,6 +55,20 @@ customer availability:
 Post-release documentation updates should not run additional paid production
 smoke unless Henry explicitly approves the extra cost and scope.
 
+Customer documentation release workflow:
+
+- Keep customer guide edits, internal release-note updates, pushes, builds,
+  deploys, validation smoke, and paid smoke as separate approval gates.
+- Final customer guide v2.2.0 for Seed Audio is
+  `Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`.
+- Do not deliver customer files with `_FIXED`, `_DRAFT`, `_REJECTED`, or a
+  wrong version in the filename.
+- LibreOffice is only a quick automated preview and structure smoke for DOCX.
+  Microsoft Word / Office / Henry manual review is the final DOCX/PDF visual
+  quality authority.
+- Docs-only commits must not recursively change frozen production candidate
+  image tags, source revisions, or deployment traceability.
+
 For production smoke that uses a Keychain token, prefer a transport that does
 not expose the bearer value in process arguments, files, shell history, or logs.
 The Mini RC1 production pass used curl with Authorization supplied through

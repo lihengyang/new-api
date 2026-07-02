@@ -8,6 +8,12 @@ P1 `client_request_id` duplicate replay must not pre-deduct again and must not c
 
 Billing internals such as pre-deduct, refund, top-up, `modelRatio`, `groupRatio`, and `otherMultiplier` are internal and must not be exposed in customer docs.
 
+Seed Audio customer docs should say only that billing is based on successfully
+generated audio duration, failed validation requests are not charged, and
+customers can check balance with `GET /v1/billing/balance`. Do not expose Seed
+Audio quota formulas, group ratios, per-second quota constants, test balances,
+or internal settlement fields in customer docs.
+
 For commercial billing conclusions, verify current logs and DB behavior rather than relying on upstream new-api assumptions.
 
 ## Billing Release Invariants

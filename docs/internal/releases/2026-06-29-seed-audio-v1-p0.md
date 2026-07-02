@@ -2,7 +2,7 @@
 
 Date: 2026-06-29
 Scope: local branch `feature/seed-audio-v1`
-Status: `PREFLIGHT_FUNCTIONAL_PASSED / PRODUCTION_NOT_DEPLOYED`
+Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED`
 
 ## Current Status Summary
 
@@ -11,8 +11,14 @@ Status: `PREFLIGHT_FUNCTIONAL_PASSED / PRODUCTION_NOT_DEPLOYED`
   `audio_url`
 - DB-backed idempotency passed
 - Usage logs passed
-- Production, `new-api-nightly`, and `new-api-staging` were not touched
-- Customer documentation was not updated
+- Production Gate 1A-1 deploy passed.
+- Production validation passed for `text_only`, `audio_url`, and `image_url`.
+- Customer documentation is ready in
+  `Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`.
+- v2.2.0 supersedes v2.1.4 for active onboarding unless a tenant-specific note
+  says otherwise.
+- Later docs-only commits do not change the frozen production candidate image
+  tag or source traceability.
 
 ## Production Gate 0 Read-only Reconnaissance
 
@@ -177,8 +183,10 @@ the new rollback artifact:
 
 ### Post-pass Docs and Cleanup
 
-- After production pass, update internal release note only.
-- Customer docs remain blocked until Henry explicitly approves publication.
+- At Gate 1A pass time, update internal release note only; customer docs were
+  still blocked until Henry explicitly approved publication.
+- Final customer documentation closure is now recorded in
+  `Customer Documentation Closure` below.
 - Keep rollback artifact through the rollback window.
 - After Henry approves rollback-window closure, clean temporary SSH key
   material and release-only temp files.
@@ -380,6 +388,54 @@ Final production capability status:
 - `audio_url`: released / production validated
 - `image_url`: released / production validated, with customer-facing caveat
   that source URLs must be public HTTPS URLs accessible by the provider.
+
+## Customer Documentation Closure
+
+Seed Audio P0 final status:
+
+- `PRODUCTION_RELEASED`
+- `CUSTOMER_DOC_READY`
+- `TEXT_AUDIO_IMAGE_VALIDATED`
+
+Final customer guide:
+
+- `Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`
+- v2.2.0 supersedes v2.1.4 for active onboarding unless a tenant-specific note
+  says otherwise.
+
+Customer-facing Seed Audio capabilities documented in v2.2.0:
+
+- `POST /v1/audio/speech`
+- `text_only`
+- `audio_url`
+- `image_url`
+- `metadata.client_request_id`
+- `GET /v1/billing/balance`
+
+Unsupported in the customer guide:
+
+- `voice`
+- `audio_data`
+- `image_data`
+- base64 input
+- customer project routing fields
+- upstream model names
+
+Reference URL caveat:
+
+- Reference URLs must be public HTTPS URLs and provider-accessible.
+- Browser-accessible URLs do not guarantee provider-side access or processing.
+
+Documentation workflow lesson:
+
+- LibreOffice is useful for quick automated preview and structure smoke only.
+- Final customer DOCX/PDF visual QA should use Microsoft Word / Office and
+  Henry manual review.
+- Do not treat LibreOffice render output as the final Office/PDF authority.
+- Do not keep `_FIXED`, `_DRAFT`, or `_REJECTED` in customer delivery
+  filenames.
+- Do not let docs-only commits recursively change production candidate image
+  tags or source traceability.
 
 ## Product Boundary
 
@@ -606,9 +662,9 @@ regression remediation:
 - `go test ./model ./controller ./dto ./relay -count=1`
 - `git diff --check`
 
-## Preflight Checklist
+## Historical Preflight Checklist
 
-Before any preflight or production use:
+Before preflight or production use, this was the required setup checklist:
 
 - Create a dedicated Seed Audio channel per tenant with the BytePlus Seed Speech ProjectName and X-Api-Key configured admin-side only.
 - Map only tenant aliases such as `lsf-seed-audio-1.0-<tenant>` to the Seed Audio channel.
@@ -617,4 +673,5 @@ Before any preflight or production use:
   `token_id` + `client_request_id` before enabling `metadata.client_request_id`.
 - Run one unpaid validation-only smoke first.
 - Run any paid upstream smoke only after explicit approval and with sensitive parameters supplied via approved secret handling.
-- Do not update customer documentation until separately approved.
+- Customer documentation required separate approval; final approval and
+  customer-doc readiness are now recorded in `Customer Documentation Closure`.

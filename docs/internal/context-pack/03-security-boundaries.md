@@ -11,3 +11,10 @@ No production modification is allowed without explicit approval.
 ProjectName must remain server-side.
 
 Customer docs must stay customer-safe.
+
+Seed Audio customer docs may expose only tenant-facing model aliases, customer
+endpoint paths, public HTTPS reference URL requirements, and high-level billing
+behavior. They must not expose ProjectName, upstream model names, internal
+channel/group/project configuration, quota formulas, group ratios, test
+balances, commit/image evidence, raw prompts, raw reference URLs, temporary
+output URLs, or production smoke details.

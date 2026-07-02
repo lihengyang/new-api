@@ -35,6 +35,17 @@ Supported P1 customer endpoint:
 
 - `GET /v1/billing/balance`
 
+Seed Audio P0 customer release status:
+
+- Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED`
+- Customer audio endpoint: `POST /v1/audio/speech`
+- Customer-facing modes: `text_only`, `audio_url`, `image_url`
+- Retry safety: `metadata.client_request_id`
+- Final customer guide:
+  `Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`
+- v2.2.0 supersedes v2.1.4 for active onboarding unless a tenant-specific note
+  says otherwise.
+
 `metadata.client_request_id` is optional and supported for `POST /v1/videos`.
 
 Seedance 2.0 Standard supports tenant-enabled 4K requests. Seedance 2.0 Mini
@@ -57,14 +68,16 @@ system Mini access toggle was changed or restored.
 Customer Mini documentation remains unpublished until Henry separately approves
 publication.
 
-Customer guide archive status: `Light_Speed_Future_API_Integration_Guide_v2.1.4`
-is the current customer guide designation, and
-`Light_Speed_Future_API_Integration_Guide_v2.1.3` is superseded. Archive and
-publication work must remain customer-safe and must not include upstream model
-IDs, ProjectName values, internal channel/group IDs, or release smoke evidence.
-The local archived customer artifact is the DOCX under `docs/customer/`; PDF
-generation remains blocked until the local document-rendering dependency is
-repaired or Henry supplies a customer-safe PDF artifact.
+Customer guide archive status:
+`Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`
+is the active onboarding guide unless a tenant-specific note says otherwise.
+`Light_Speed_Future_API_Integration_Guide_v2.1.4` remains historical and is
+superseded for active onboarding. Archive and publication work must remain
+customer-safe and must not include upstream model IDs, ProjectName values,
+internal channel/group IDs, release smoke evidence, test balances, or raw
+reference/output URLs. Final customer DOCX/PDF visual QA is a Microsoft Word /
+Office / Henry manual review gate; LibreOffice is only a quick automated
+preview and structure smoke.
 
 Asset Library paths are supported according to the tenant package.
 

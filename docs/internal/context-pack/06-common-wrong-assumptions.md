@@ -144,6 +144,32 @@ Correct: keep customer docs unpublished until Henry separately approves
 publication, and keep them free of internal routing, credentials, ProjectName,
 channel/group identifiers, DB fields, and billing internals.
 
+Wrong: LibreOffice render output is the final authority for customer DOCX/PDF
+visual quality.
+
+Correct: LibreOffice is only a quick automated preview and structure smoke.
+Final customer DOCX/PDF visual QA should use Microsoft Word / Office and Henry
+manual review.
+
+Wrong: a customer delivery file can keep `_FIXED`, `_DRAFT`, `_REJECTED`, or a
+wrong version filename once the content is correct.
+
+Correct: final customer delivery filenames must use the approved version and
+title. For Seed Audio P0, the final guide is
+`Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`.
+
+Wrong: docs-only customer-guide commits should update production candidate
+image tags or source traceability.
+
+Correct: docs-only commits do not change the frozen production candidate image
+tag, deployed artifact identity, or release-source traceability.
+
+Wrong: v2.0.0 is a valid Seed Audio customer-guide version because a temporary
+filename once said so.
+
+Correct: the final Seed Audio Production Edition customer-guide version is
+v2.2.0. Treat v2.0.0 as a filename mistake, not a release fact.
+
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.
