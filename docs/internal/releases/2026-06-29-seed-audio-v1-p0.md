@@ -306,8 +306,80 @@ Gate status:
 - Gate 1A-1 production deploy: `PASS`
 - Gate 1B validation-only: `PASS`
 - Gate 1C `text_only` paid smoke: `PASS`
-- `audio_url` and `image_url` production validation remain second-batch and
-  were not run.
+- Gate 2 `audio_url` and `image_url` production URL reference validation:
+  `PASS`
+
+## Gate 2 Production URL Reference Validation Result
+
+Gate 2 production URL reference validation completed with customer-safe
+evidence only. No input reference URL value, output URL value, audio base64,
+token, ProjectName, raw upstream body, or customer data was printed.
+
+### image_url
+
+Earlier `image_url` attempts with these `client_request_id` values failed
+safely with HTTP `502` and no charge:
+
+- `prod-seed-audio-imageurl-20260702T122339Z`
+- `prod-seed-audio-imageurl-retry-20260702T123705Z`
+
+Successful `image_url` validation:
+
+- Production base URL: `https://ai-api.lightspeedfuture.com`
+- Model alias: `lsf-seed-audio-1.0-henrytest`
+- Group ratio: `2`
+- `client_request_id`: `prod-seed-audio-imageurl-bison-20260702T124516Z`
+- Balance before: HTTP `200`
+- Balance before available USD: `20.464698`
+- `/v1/audio/speech`: HTTP `200`
+- Object: `audio.speech`
+- Response model: `lsf-seed-audio-1.0-henrytest`
+- Duration: `5.4`
+- Original duration: `5.4`
+- Output URL present: `true`; value not printed.
+- Audio base64 present: `false`
+- Balance after: HTTP `200`
+- Balance after available USD: `20.437698`
+- Initial balance delta: `0.027000`
+- Expected quota: `13500`
+- Expected USD: `0.027`
+- Billing match with tolerance: `true`
+- Replay: HTTP `200`
+- Replay same response ID: `true`
+- Balance after replay: HTTP `200`
+- Balance after replay available USD: `20.437698`
+- Replay balance delta: `0.000000`
+- Replay no duplicate charge: `true`
+- No image URL value was printed.
+- No output URL value was printed.
+- No audio base64 was printed.
+- Customer docs were not updated in this step.
+
+### audio_url
+
+Gate 2B `audio_url`: `PASS`.
+
+- `client_request_id`: `prod-seed-audio-audiourl-20260702T124101Z`
+- Balance before available USD: `20.483378`
+- Balance after available USD: `20.464698`
+- Original duration: `3.736125`
+- Initial balance delta: `0.018680`
+- Expected quota: `9340`
+- Expected USD: `0.01868`
+- Billing match with tolerance: `true`
+- Replay same response ID: `true`
+- Replay balance delta: `0.000000`
+- Replay no duplicate charge: `true`
+- No input audio URL value was printed.
+- No output URL value was printed.
+- No audio base64 was printed.
+
+Final production capability status:
+
+- `text_only`: released / production validated
+- `audio_url`: released / production validated
+- `image_url`: released / production validated, with customer-facing caveat
+  that source URLs must be public HTTPS URLs accessible by the provider.
 
 ## Product Boundary
 
