@@ -296,13 +296,12 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   // Search tokens function
   const searchTokens = async (page = 1, size = pageSize) => {
     const normalizedPage = Number.isInteger(page) && page > 0 ? page : 1;
-    const normalizedSize =
-      Number.isInteger(size) && size > 0 ? size : pageSize;
+    const normalizedSize = Number.isInteger(size) && size > 0 ? size : pageSize;
 
     const { searchKeyword, searchToken } = getFormValues();
     if (searchKeyword === '' && searchToken === '') {
       setSearchMode(false);
-      await loadTokens(1);
+      await loadTokens(1, normalizedSize);
       return;
     }
     setSearching(true);
@@ -344,11 +343,22 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   };
 
   const handlePageSizeChange = async (size) => {
-    setPageSize(size);
+    const normalizedSize = Number(size);
+    if (
+      !Number.isInteger(normalizedSize) ||
+      normalizedSize <= 0 ||
+      normalizedSize === pageSize ||
+      loading ||
+      searching
+    ) {
+      return;
+    }
+    setPageSize(normalizedSize);
+    setSelectedKeys([]);
     if (searchMode) {
-      await searchTokens(1, size);
+      await searchTokens(1, normalizedSize);
     } else {
-      await loadTokens(1, size);
+      await loadTokens(1, normalizedSize);
     }
   };
 
@@ -449,7 +459,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
         }
       })
       .catch(() => {});
-  }, [pageSize]);
+  }, []);
 
   return {
     // Basic state
