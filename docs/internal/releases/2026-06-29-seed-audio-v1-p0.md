@@ -20,6 +20,46 @@ Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED`
 - Later docs-only commits do not change the frozen production candidate image
   tag or source traceability.
 
+## RC1 Reliability / Admin UI Batch
+
+Batch name: `seed-audio-p01-reliability-admin-ui-rc1`
+
+Scope:
+
+- Seed Audio local `text_prompt` validation now uses the current official
+  `3000` character limit. Older `2048` references are stale.
+- Validation counts the final upstream payload:
+  trimmed `instructions` + newline + trimmed `input`.
+- More than `3000` characters is rejected locally with
+  `seed_audio_input_too_long` before idempotency record creation, precharge, or
+  upstream dispatch.
+- Upstream failure handling stores sanitized diagnostics on failed
+  `seed_audio_idempotencies` rows, searchable by `client_request_id`. Stored
+  diagnostics include HTTP status class, content-type class, bounded safe
+  request/log IDs, latency, body-size bucket, response class, safe
+  `ResponseMetadata.RequestId`, and marker flags only. Raw upstream bodies,
+  raw prompts, raw reference URLs, temporary output URLs, ProjectName, bearer
+  keys, AK/SK, SQL_DSN, and internal channel/group identifiers are not stored.
+- Invalid JSON, HTML/Cloudflare-like bodies, upstream 4xx/5xx JSON, and
+  timeout/network failures remain generic customer-facing upstream errors
+  unless the body looks like a provider-side reference fetch/access failure,
+  which remains `invalid_reference_url`.
+- A failed idempotent upstream attempt remains tied to its original
+  `metadata.client_request_id`; customers should use a fresh
+  `metadata.client_request_id` for a new upstream attempt.
+- SFX and ambience descriptions are not locally rejected. Exact upstream
+  behavior may differ between the domestic doubao console and BytePlus Global
+  API.
+- Admin `/console/token` page-size changes are guarded against invalid,
+  duplicate, loading, and searching-state reloads; initialization is mount-only
+  and search mode remains on the search endpoint during page-size changes.
+
+Customer-guide update status:
+
+- Customer guide updates are draft-only and remain a separate approval gate.
+- Do not include or modify unapproved customer DOCX paths unless Henry
+  explicitly approves the exact customer-doc path.
+
 ## Production Gate 0 Read-only Reconnaissance
 
 Henry approved Gate 0 read-only production reconnaissance only. No production
@@ -463,6 +503,9 @@ P0 rejects:
 - non-`mp3` response formats
 
 Request bodies are capped at 128 KB before upstream dispatch.
+Seed Audio `text_prompt` is capped at `3000` characters after combining
+trimmed `instructions` and trimmed `input`; older `2048` local-limit references
+are stale.
 
 ## Billing Invariant
 

@@ -41,6 +41,10 @@ Seed Audio P0 customer release status:
 - Customer audio endpoint: `POST /v1/audio/speech`
 - Customer-facing modes: `text_only`, `audio_url`, `image_url`
 - Retry safety: `metadata.client_request_id`
+- Current Seed Audio `text_prompt` limit: `3000` characters. Older `2048`
+  references are stale.
+- Seed Audio combines trimmed `instructions` and trimmed `input` into the
+  upstream `text_prompt`; both fields count toward the `3000` character limit.
 - Final customer guide:
   `Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`
 - v2.2.0 supersedes v2.1.4 for active onboarding unless a tenant-specific note

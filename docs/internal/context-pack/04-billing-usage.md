@@ -14,6 +14,14 @@ customers can check balance with `GET /v1/billing/balance`. Do not expose Seed
 Audio quota formulas, group ratios, per-second quota constants, test balances,
 or internal settlement fields in customer docs.
 
+Seed Audio local `text_prompt` validation uses the combined trimmed
+`instructions` + newline + trimmed `input` payload and rejects more than `3000`
+characters before precharge or upstream dispatch. Upstream failures, including
+invalid JSON or provider service errors, must refund the Seed Audio precharge.
+Failed idempotent upstream attempts remain searchable by
+`metadata.client_request_id`; retrying a new upstream attempt requires a fresh
+client request ID.
+
 For commercial billing conclusions, verify current logs and DB behavior rather than relying on upstream new-api assumptions.
 
 ## Billing Release Invariants
