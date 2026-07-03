@@ -48,4 +48,23 @@ type SeedAudioIdempotencyRecord struct {
 	CreatedAt        int64   `json:"created_at"`
 	ErrorCode        string  `json:"error_code,omitempty"`
 	ErrorStatusCode  int     `json:"error_status_code,omitempty"`
+	ErrorDiagnostics string  `json:"error_diagnostics,omitempty"`
+}
+
+type SeedAudioUpstreamDiagnostics struct {
+	UpstreamHTTPStatus        int    `json:"upstream_http_status,omitempty"`
+	ContentTypeClass          string `json:"content_type_class,omitempty"`
+	XTTLogID                  string `json:"x_tt_logid,omitempty"`
+	XTTTraceID                string `json:"x_tt_trace_id,omitempty"`
+	RequestID                 string `json:"request_id,omitempty"`
+	XRequestID                string `json:"x_request_id,omitempty"`
+	ResponseMetadataRequestID string `json:"response_metadata_request_id,omitempty"`
+	LatencyMS                 int64  `json:"latency_ms,omitempty"`
+	BodySizeBucket            string `json:"body_size_bucket,omitempty"`
+	ResponseClass             string `json:"response_class,omitempty"`
+	ErrorClass                string `json:"error_class,omitempty"`
+	InvalidJSON               bool   `json:"invalid_json,omitempty"`
+	HTML                      bool   `json:"html,omitempty"`
+	CloudflareLike            bool   `json:"cloudflare_like,omitempty"`
+	ReferenceFetchLike        bool   `json:"reference_fetch_like,omitempty"`
 }

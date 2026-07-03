@@ -36,7 +36,7 @@ const (
 	seedAudioDefaultBaseURL          = "https://voice.ap-southeast-1.bytepluses.com"
 	seedAudioCreatePath              = "/api/v3/tts/create"
 	seedAudioDefaultFormat           = "mp3"
-	seedAudioMaxTextRunes            = 2048
+	seedAudioMaxTextRunes            = 3000
 	seedAudioMaxBodyBytes            = 128 * 1024
 	seedAudioBaseQuotaPerSecond      = 1250.0
 	seedAudioMaxGeneratedSeconds     = 120.0
@@ -174,6 +174,7 @@ func SeedAudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	var settled bool
 	var upstreamDispatched bool
+	var upstreamDiagnostics *dto.SeedAudioUpstreamDiagnostics
 	defer func() {
 		if newAPIError == nil {
 			return
@@ -185,7 +186,7 @@ func SeedAudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			return
 		}
 		if upstreamDispatched {
-			_ = idempotency.storeFailure(c, newAPIError)
+			_ = idempotency.storeFailure(c, newAPIError, upstreamDiagnostics)
 			return
 		}
 		_ = idempotency.abandon(c)
@@ -200,8 +201,10 @@ func SeedAudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 
 	upstreamDispatched = true
-	result, newAPIError := seedAudioDispatchUpstream(c, info, normalized)
-	if newAPIError != nil {
+	result, diagnostics, dispatchErr := seedAudioDispatchUpstream(c, info, normalized)
+	upstreamDiagnostics = diagnostics
+	if dispatchErr != nil {
+		newAPIError = dispatchErr
 		return newAPIError
 	}
 
@@ -286,12 +289,12 @@ func buildSeedAudioNormalizedRequest(audioReq *dto.AudioRequest, bodyMap map[str
 	if strings.TrimSpace(audioReq.Voice) != "" {
 		return nil, seedAudioValidationError("voice is not supported for Seed Audio P0", "voice")
 	}
-	textPrompt := strings.TrimSpace(strings.Join(seedAudioNonEmpty(audioReq.Instructions, audioReq.Input), "\n"))
+	textPrompt := seedAudioBuildTextPrompt(audioReq.Instructions, audioReq.Input)
 	if textPrompt == "" {
 		return nil, seedAudioValidationError("input or instructions is required", "input")
 	}
 	if utf8.RuneCountInString(textPrompt) > seedAudioMaxTextRunes {
-		return nil, seedAudioValidationError("Seed Audio text_prompt exceeds 2048 characters", "input")
+		return nil, seedAudioInputTooLongError()
 	}
 
 	format := strings.ToLower(strings.TrimSpace(audioReq.ResponseFormat))
@@ -326,15 +329,16 @@ func buildSeedAudioNormalizedRequest(audioReq *dto.AudioRequest, bodyMap map[str
 	}, nil
 }
 
-func seedAudioNonEmpty(values ...string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			out = append(out, value)
-		}
+func seedAudioBuildTextPrompt(instructions string, input string) string {
+	instructions = strings.TrimSpace(instructions)
+	input = strings.TrimSpace(input)
+	if instructions != "" && input != "" {
+		return instructions + "\n" + input
 	}
-	return out
+	if instructions != "" {
+		return instructions
+	}
+	return input
 }
 
 func scanSeedAudioForbiddenFields(value interface{}) *types.NewAPIError {
@@ -624,7 +628,7 @@ func (idem *seedAudioIdempotencyContext) storeCompleted(_ *gin.Context, record d
 	})
 }
 
-func (idem *seedAudioIdempotencyContext) storeFailure(_ *gin.Context, apiErr *types.NewAPIError) error {
+func (idem *seedAudioIdempotencyContext) storeFailure(_ *gin.Context, apiErr *types.NewAPIError, diagnostics *dto.SeedAudioUpstreamDiagnostics) error {
 	if idem == nil || apiErr == nil {
 		return nil
 	}
@@ -634,6 +638,7 @@ func (idem *seedAudioIdempotencyContext) storeFailure(_ *gin.Context, apiErr *ty
 		RequestHMAC:        idem.requestHMAC,
 		ErrorCode:          fmt.Sprintf("%v", apiErr.ToOpenAIError().Code),
 		ErrorStatusCode:    apiErr.StatusCode,
+		ErrorDiagnostics:   seedAudioDiagnosticsJSON(diagnostics),
 		UpdatedAt:          now,
 		ExpiresAt:          now + int64(seedAudioIdempotencyTTL.Seconds()),
 		TombstoneExpiresAt: now + int64(seedAudioIdempotencyTombstoneTTL.Seconds()),
@@ -691,11 +696,11 @@ func seedAudioActualQuota(originalDuration float64, groupRatio float64) int {
 	return int(math.Floor(originalDuration * seedAudioBaseQuotaPerSecond * groupRatio))
 }
 
-func seedAudioDispatchUpstream(c *gin.Context, info *relaycommon.RelayInfo, normalized *seedAudioNormalizedRequest) (*seedAudioUpstreamResult, *types.NewAPIError) {
+func seedAudioDispatchUpstream(c *gin.Context, info *relaycommon.RelayInfo, normalized *seedAudioNormalizedRequest) (*seedAudioUpstreamResult, *dto.SeedAudioUpstreamDiagnostics, *types.NewAPIError) {
 	upstreamReq := normalized.toUpstreamRequest()
 	requestBody, err := common.Marshal(upstreamReq)
 	if err != nil {
-		return nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to build Seed Audio upstream request", "")
+		return nil, nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to build Seed Audio upstream request", "")
 	}
 
 	timeout := seedAudioTimeout()
@@ -704,7 +709,7 @@ func seedAudioDispatchUpstream(c *gin.Context, info *relaycommon.RelayInfo, norm
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, seedAudioEndpoint(info.ChannelBaseUrl), bytes.NewReader(requestBody))
 	if err != nil {
-		return nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to build Seed Audio upstream request", "")
+		return nil, nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to build Seed Audio upstream request", "")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -712,7 +717,7 @@ func seedAudioDispatchUpstream(c *gin.Context, info *relaycommon.RelayInfo, norm
 
 	client, err := service.GetHttpClientWithProxy(info.ChannelSetting.Proxy)
 	if err != nil {
-		return nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to configure Seed Audio upstream client", "")
+		return nil, nil, seedAudioError(http.StatusInternalServerError, "internal_error", "internal_error", "failed to configure Seed Audio upstream client", "")
 	}
 	if client == nil {
 		client = http.DefaultClient
@@ -720,31 +725,37 @@ func seedAudioDispatchUpstream(c *gin.Context, info *relaycommon.RelayInfo, norm
 	clientCopy := *client
 	clientCopy.Timeout = timeout + 5*time.Second
 
+	startedAt := time.Now()
 	resp, err := clientCopy.Do(req)
+	latency := time.Since(startedAt)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			seedAudioMetric.upstreamTimeout.Add(1)
-			return nil, seedAudioError(http.StatusGatewayTimeout, "upstream_error", "seed_audio_upstream_timeout", "Seed Audio upstream request timed out", "")
+			return nil, seedAudioUpstreamDiagnosticsForError(ctx.Err(), latency, "timeout"), seedAudioError(http.StatusGatewayTimeout, "upstream_error", "seed_audio_upstream_timeout", "Seed Audio upstream request timed out", "")
 		}
 		seedAudioMetric.upstreamError.Add(1)
-		return nil, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream request failed", "")
+		return nil, seedAudioUpstreamDiagnosticsForError(err, latency, "network_error"), seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream request failed", "")
 	}
 	defer resp.Body.Close()
 
 	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, seedAudioMaxBodyBytes))
+	diagnostics := seedAudioBuildUpstreamDiagnostics(resp, responseBody, latency)
 	if readErr != nil {
 		seedAudioMetric.upstreamError.Add(1)
-		return nil, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "failed to read Seed Audio upstream response", "")
+		diagnostics.ErrorClass = "read_error"
+		return nil, diagnostics, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "failed to read Seed Audio upstream response", "")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, seedAudioUpstreamStatusError(resp.StatusCode, responseBody)
+		return nil, diagnostics, seedAudioUpstreamStatusErrorWithDiagnostics(resp.StatusCode, responseBody, diagnostics)
 	}
 
 	var responseAny interface{}
 	if err := common.Unmarshal(responseBody, &responseAny); err != nil {
 		seedAudioMetric.upstreamError.Add(1)
-		return nil, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream returned invalid JSON", "")
+		seedAudioMarkInvalidJSONDiagnostics(diagnostics)
+		return nil, diagnostics, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream returned invalid JSON", "")
 	}
+	seedAudioAttachJSONDiagnostics(diagnostics, responseAny)
 	result := &seedAudioUpstreamResult{
 		URL:              seedAudioFindStringField(responseAny, "url"),
 		Duration:         seedAudioFindFloatField(responseAny, "duration"),
@@ -753,20 +764,23 @@ func seedAudioDispatchUpstream(c *gin.Context, info *relaycommon.RelayInfo, norm
 	}
 	if result.OriginalDuration <= 0 {
 		seedAudioMetric.missingOriginalDuration.Add(1)
-		return nil, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_missing_original_duration", "Seed Audio upstream response is missing original_duration", "")
+		diagnostics.ErrorClass = "missing_original_duration"
+		return nil, diagnostics, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_missing_original_duration", "Seed Audio upstream response is missing original_duration", "")
 	}
 	if result.OriginalDuration > seedAudioMaxGeneratedSeconds {
 		seedAudioMetric.upstreamError.Add(1)
-		return nil, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream duration exceeds reserved maximum", "")
+		diagnostics.ErrorClass = "duration_exceeds_reserved"
+		return nil, diagnostics, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream duration exceeds reserved maximum", "")
 	}
 	if result.URL == "" {
 		seedAudioMetric.missingURL.Add(1)
-		return nil, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_missing_url", "Seed Audio upstream response is missing url", "")
+		diagnostics.ErrorClass = "missing_url"
+		return nil, diagnostics, seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_missing_url", "Seed Audio upstream response is missing url", "")
 	}
 	if result.Duration <= 0 {
 		result.Duration = result.OriginalDuration
 	}
-	return result, nil
+	return result, diagnostics, nil
 }
 
 func (normalized *seedAudioNormalizedRequest) toUpstreamRequest() seedAudioUpstreamRequest {
@@ -816,16 +830,275 @@ func seedAudioTimeout() time.Duration {
 }
 
 func seedAudioUpstreamStatusError(statusCode int, responseBody []byte) *types.NewAPIError {
+	diagnostics := seedAudioBuildUpstreamDiagnostics(&http.Response{
+		StatusCode: statusCode,
+		Header:     http.Header{},
+	}, responseBody, 0)
+	return seedAudioUpstreamStatusErrorWithDiagnostics(statusCode, responseBody, diagnostics)
+}
+
+func seedAudioUpstreamStatusErrorWithDiagnostics(statusCode int, responseBody []byte, diagnostics *dto.SeedAudioUpstreamDiagnostics) *types.NewAPIError {
 	body := strings.ToLower(string(responseBody))
+	if responseAny, ok := seedAudioParseDiagnosticJSON(responseBody); ok {
+		seedAudioAttachJSONDiagnostics(diagnostics, responseAny)
+	} else if seedAudioLooksLikeJSON(responseBody) {
+		seedAudioMarkInvalidJSONDiagnostics(diagnostics)
+	}
 	if seedAudioLooksLikeReferenceFetchError(body) {
 		seedAudioMetric.invalidReferenceURL.Add(1)
+		if diagnostics != nil {
+			diagnostics.ErrorClass = "invalid_reference_url"
+			diagnostics.ReferenceFetchLike = true
+		}
 		return seedAudioInvalidReferenceURLError("Seed Audio upstream could not access a reference URL")
 	}
 	seedAudioMetric.upstreamError.Add(1)
+	if diagnostics != nil {
+		diagnostics.ErrorClass = seedAudioHTTPErrorClass(statusCode, diagnostics)
+	}
 	if statusCode >= http.StatusInternalServerError {
 		return seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream service is unavailable", "")
 	}
 	return seedAudioError(http.StatusBadGateway, "upstream_error", "seed_audio_upstream_error", "Seed Audio upstream returned an error", "")
+}
+
+func seedAudioBuildUpstreamDiagnostics(resp *http.Response, body []byte, latency time.Duration) *dto.SeedAudioUpstreamDiagnostics {
+	statusCode := 0
+	headers := http.Header{}
+	if resp != nil {
+		statusCode = resp.StatusCode
+		headers = resp.Header
+	}
+	contentTypeClass := seedAudioContentTypeClass(headers.Get("Content-Type"), body)
+	html := seedAudioLooksLikeHTML(headers.Get("Content-Type"), body)
+	cloudflareLike := seedAudioLooksLikeCloudflare(body)
+	return &dto.SeedAudioUpstreamDiagnostics{
+		UpstreamHTTPStatus: statusCode,
+		ContentTypeClass:   contentTypeClass,
+		XTTLogID:           seedAudioSanitizeDiagnosticValue(headers.Get("X-Tt-Logid"), 128),
+		XTTTraceID:         seedAudioSanitizeDiagnosticValue(headers.Get("X-Tt-Trace-Id"), 128),
+		RequestID:          seedAudioSanitizeDiagnosticValue(headers.Get("Request-Id"), 128),
+		XRequestID:         seedAudioSanitizeDiagnosticValue(headers.Get("X-Request-Id"), 128),
+		LatencyMS:          seedAudioLatencyMS(latency),
+		BodySizeBucket:     seedAudioBodySizeBucket(len(body)),
+		ResponseClass:      seedAudioHTTPResponseClass(statusCode),
+		HTML:               html,
+		CloudflareLike:     cloudflareLike,
+	}
+}
+
+func seedAudioUpstreamDiagnosticsForError(_ error, latency time.Duration, errorClass string) *dto.SeedAudioUpstreamDiagnostics {
+	return &dto.SeedAudioUpstreamDiagnostics{
+		LatencyMS:      seedAudioLatencyMS(latency),
+		BodySizeBucket: seedAudioBodySizeBucket(0),
+		ResponseClass:  errorClass,
+		ErrorClass:     errorClass,
+	}
+}
+
+func seedAudioDiagnosticsJSON(diagnostics *dto.SeedAudioUpstreamDiagnostics) string {
+	if diagnostics == nil {
+		return ""
+	}
+	data, err := common.Marshal(diagnostics)
+	if err != nil {
+		return ""
+	}
+	if string(data) == "{}" {
+		return ""
+	}
+	return string(data)
+}
+
+func seedAudioParseDiagnosticJSON(body []byte) (interface{}, bool) {
+	if !seedAudioLooksLikeJSON(body) {
+		return nil, false
+	}
+	var responseAny interface{}
+	if err := common.Unmarshal(body, &responseAny); err != nil {
+		return nil, false
+	}
+	return responseAny, true
+}
+
+func seedAudioAttachJSONDiagnostics(diagnostics *dto.SeedAudioUpstreamDiagnostics, responseAny interface{}) {
+	if diagnostics == nil {
+		return
+	}
+	if requestID := seedAudioFindResponseMetadataRequestID(responseAny); requestID != "" {
+		diagnostics.ResponseMetadataRequestID = requestID
+	}
+}
+
+func seedAudioMarkInvalidJSONDiagnostics(diagnostics *dto.SeedAudioUpstreamDiagnostics) {
+	if diagnostics == nil {
+		return
+	}
+	diagnostics.InvalidJSON = true
+	diagnostics.ErrorClass = "invalid_json"
+}
+
+func seedAudioFindResponseMetadataRequestID(value interface{}) string {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, child := range typed {
+			if seedAudioNormalizeFieldKey(key) == "responsemetadata" {
+				return seedAudioSanitizeDiagnosticValue(seedAudioFindStringField(child, "RequestId", "RequestID", "request_id"), 128)
+			}
+		}
+		for _, child := range typed {
+			if found := seedAudioFindResponseMetadataRequestID(child); found != "" {
+				return found
+			}
+		}
+	case []interface{}:
+		for _, child := range typed {
+			if found := seedAudioFindResponseMetadataRequestID(child); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
+func seedAudioHTTPErrorClass(statusCode int, diagnostics *dto.SeedAudioUpstreamDiagnostics) string {
+	base := "upstream_http_" + seedAudioHTTPResponseClass(statusCode)
+	if diagnostics == nil {
+		return base
+	}
+	switch {
+	case diagnostics.CloudflareLike:
+		return base + "_cloudflare"
+	case diagnostics.HTML:
+		return base + "_html"
+	case diagnostics.InvalidJSON:
+		return base + "_invalid_json"
+	case diagnostics.ContentTypeClass != "":
+		return base + "_" + diagnostics.ContentTypeClass
+	default:
+		return base
+	}
+}
+
+func seedAudioHTTPResponseClass(statusCode int) string {
+	switch {
+	case statusCode >= 100 && statusCode < 200:
+		return "1xx"
+	case statusCode >= 200 && statusCode < 300:
+		return "2xx"
+	case statusCode >= 300 && statusCode < 400:
+		return "3xx"
+	case statusCode >= 400 && statusCode < 500:
+		return "4xx"
+	case statusCode >= 500 && statusCode < 600:
+		return "5xx"
+	case statusCode == 0:
+		return ""
+	default:
+		return "other"
+	}
+}
+
+func seedAudioContentTypeClass(contentType string, body []byte) string {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch {
+	case strings.Contains(mediaType, "json"):
+		return "json"
+	case mediaType == "text/html" || mediaType == "application/xhtml+xml":
+		return "html"
+	case strings.HasPrefix(mediaType, "text/"):
+		return "text"
+	case mediaType == "application/octet-stream":
+		return "binary"
+	case mediaType != "":
+		return "other"
+	case len(strings.TrimSpace(string(body))) == 0:
+		return "empty"
+	case seedAudioLooksLikeJSON(body):
+		return "json"
+	case seedAudioLooksLikeHTML(contentType, body):
+		return "html"
+	default:
+		return "unknown"
+	}
+}
+
+func seedAudioLooksLikeJSON(body []byte) bool {
+	trimmed := strings.TrimSpace(string(body))
+	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+}
+
+func seedAudioLooksLikeHTML(contentType string, body []byte) bool {
+	mediaType := strings.ToLower(contentType)
+	trimmed := strings.ToLower(strings.TrimSpace(string(body)))
+	return strings.Contains(mediaType, "text/html") ||
+		strings.HasPrefix(trimmed, "<!doctype html") ||
+		strings.HasPrefix(trimmed, "<html") ||
+		strings.Contains(trimmed, "<body")
+}
+
+func seedAudioLooksLikeCloudflare(body []byte) bool {
+	trimmed := strings.ToLower(string(body))
+	return strings.Contains(trimmed, "cloudflare") ||
+		strings.Contains(trimmed, "cf-ray") ||
+		strings.Contains(trimmed, "cf-error") ||
+		strings.Contains(trimmed, "attention required")
+}
+
+func seedAudioBodySizeBucket(size int) string {
+	switch {
+	case size <= 0:
+		return "empty"
+	case size <= 1024:
+		return "le_1kb"
+	case size <= 4*1024:
+		return "le_4kb"
+	case size <= 16*1024:
+		return "le_16kb"
+	case size <= 64*1024:
+		return "le_64kb"
+	default:
+		return "le_128kb"
+	}
+}
+
+func seedAudioLatencyMS(latency time.Duration) int64 {
+	if latency <= 0 {
+		return 0
+	}
+	return latency.Milliseconds()
+}
+
+func seedAudioSanitizeDiagnosticValue(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || maxRunes <= 0 {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, "http://") || strings.Contains(lower, "https://") {
+		return "redacted_url_like"
+	}
+	if strings.Contains(lower, "bearer ") || strings.Contains(lower, "x-api-key") || strings.Contains(lower, "sql_dsn") {
+		return "redacted_sensitive_like"
+	}
+	var b strings.Builder
+	count := 0
+	for _, r := range value {
+		if count >= maxRunes {
+			break
+		}
+		switch {
+		case r >= 'A' && r <= 'Z',
+			r >= 'a' && r <= 'z',
+			r >= '0' && r <= '9',
+			r == '.' || r == '_' || r == '-' || r == ':' || r == '/' || r == '=' || r == '+':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+		count++
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 func seedAudioLooksLikeReferenceFetchError(body string) bool {
@@ -1044,6 +1317,11 @@ func seedAudioInsufficientBalanceError(requiredQuota int) *types.NewAPIError {
 func seedAudioValidationError(message string, param string) *types.NewAPIError {
 	seedAudioMetric.validationFailed.Add(1)
 	return seedAudioError(http.StatusBadRequest, "invalid_request_error", "invalid_request_error", message, param)
+}
+
+func seedAudioInputTooLongError() *types.NewAPIError {
+	seedAudioMetric.validationFailed.Add(1)
+	return seedAudioError(http.StatusBadRequest, "invalid_request_error", "seed_audio_input_too_long", fmt.Sprintf("Seed Audio text_prompt exceeds %d characters", seedAudioMaxTextRunes), "input")
 }
 
 func seedAudioInvalidReferenceURLError(message string) *types.NewAPIError {
