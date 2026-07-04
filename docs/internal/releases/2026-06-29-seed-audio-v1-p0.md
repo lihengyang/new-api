@@ -60,6 +60,58 @@ Customer-guide update status:
 - Do not include or modify unapproved customer DOCX paths unless Henry
   explicitly approves the exact customer-doc path.
 
+## RC1 Production Closeout
+
+Henry approved production deploy for
+`seed-audio-p01-reliability-admin-ui-rc1` on 2026-07-04.
+
+Deployment identity:
+
+- Production container: `new-api-nightly`
+- Production image:
+  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
+- Source revision:
+  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
+- Scope: deployed to production `new-api-nightly` only.
+- Rollback container:
+  `new-api-nightly-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
+- Rollback image tag:
+  `new-api:rollback-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
+
+Post-deploy verification:
+
+- Local `/api/status`: PASS, HTTP `200` JSON.
+- Public `/api/status`: PASS, HTTP `200` JSON.
+- Production container restart count: `0`.
+- Production DB baseline: MySQL.
+- `seed_audio_idempotencies.error_diagnostics`: present as nullable `TEXT`.
+- Seed Audio `3001` character local rejection: PASS with HTTP `400`
+  `seed_audio_input_too_long`.
+- `3001` rejection created no Seed Audio idempotency row and no charge,
+  consistent with no upstream dispatch.
+- Seed Audio `3000` character validation path: PASS; request was not rejected
+  as `seed_audio_input_too_long`.
+- Minimal paid Seed Audio success smoke: PASS.
+- Replay of the same `metadata.client_request_id`: PASS; no duplicate charge.
+- Sensitive/log scan: PASS for forbidden disclosures. No credentials, AK/SK,
+  SQL_DSN, bearer token, ProjectName value, internal channel/group value, raw
+  prompt, raw reference URL, temporary output URL, raw upstream body, or
+  signature marker was exposed in the closeout evidence.
+- Production `/console/token` manual check: PASS.
+  - Page-size `10 -> 20`: no flicker, no request storm, no HTTP `429`.
+  - Page-size `20 -> 10`: normal.
+  - Search-mode page-size change stayed in filtered result view.
+
+Closeout boundaries:
+
+- Customer guide files were not modified.
+- Untracked customer DOCX
+  `docs/customer/Light Speed Future API Integration Guide v2.2.0.docx`
+  remains untracked and untouched.
+- No push has been performed yet.
+- This closeout is internal only and does not change customer-facing guide
+  content.
+
 ## Production Gate 0 Read-only Reconnaissance
 
 Henry approved Gate 0 read-only production reconnaissance only. No production
