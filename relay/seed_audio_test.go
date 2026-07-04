@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -334,6 +335,143 @@ func TestSeedAudioDispatchInvalidJSONDiagnostics(t *testing.T) {
 	require.Equal(t, "invalid_json", diagnostics.ErrorClass)
 }
 
+func TestSeedAudioDispatchParsesOfficialTopLevelSuccessSchema(t *testing.T) {
+	result, diagnostics, apiErr := dispatchSeedAudioUpstreamTestResponse(t, http.StatusOK, map[string]string{
+		"Content-Type": "application/json",
+		"X-Tt-Logid":   "log-top-level-audio-url",
+	}, `{"audio":"base64-audio","duration":3.5,"original_duration":4.25,"url":"https://tmp.example.com/audio.mp3","code":0,"message":"ok"}`)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, "https://tmp.example.com/audio.mp3", result.URL)
+	require.Equal(t, "base64-audio", result.Audio)
+	require.Equal(t, 3.5, result.Duration)
+	require.Equal(t, 4.25, result.OriginalDuration)
+	require.Equal(t, "log-top-level-audio-url", result.XTTLogID)
+	require.NotNil(t, diagnostics)
+	require.Equal(t, "2xx", diagnostics.ResponseClass)
+	require.Equal(t, "json", diagnostics.ContentTypeClass)
+	require.False(t, diagnostics.InvalidJSON)
+}
+
+func TestSeedAudioDispatchParsesOfficialDataFallbackSchema(t *testing.T) {
+	result, diagnostics, apiErr := dispatchSeedAudioUpstreamTestResponse(t, http.StatusOK, map[string]string{
+		"Content-Type": "application/json",
+	}, `{"data":"base64-fallback-audio","duration":"1.5","original_duration":2.25,"code":0}`)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Empty(t, result.URL)
+	require.Equal(t, "base64-fallback-audio", result.Audio)
+	require.Equal(t, 1.5, result.Duration)
+	require.Equal(t, 2.25, result.OriginalDuration)
+	require.NotNil(t, diagnostics)
+	require.Equal(t, "le_1kb", diagnostics.BodySizeBucket)
+	require.False(t, diagnostics.InvalidJSON)
+}
+
+func TestSeedAudioDispatchLargeTopLevelAudioUsesFullBodyForBusinessParsing(t *testing.T) {
+	largeAudio := strings.Repeat("A", seedAudioDiagnosticsPreviewBytes+4096)
+	body := `{"audio":"` + largeAudio + `","duration":5.5,"original_duration":6.25}`
+
+	result, diagnostics, apiErr := dispatchSeedAudioUpstreamTestResponse(t, http.StatusOK, map[string]string{
+		"Content-Type": "application/json",
+	}, body)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, largeAudio, result.Audio)
+	require.Equal(t, 5.5, result.Duration)
+	require.Equal(t, 6.25, result.OriginalDuration)
+	require.NotNil(t, diagnostics)
+	require.Equal(t, "gt_128kb", diagnostics.BodySizeBucket)
+	require.False(t, diagnostics.InvalidJSON)
+	diagnosticsJSON := seedAudioDiagnosticsJSON(diagnostics)
+	require.NotContains(t, diagnosticsJSON, largeAudio[:128])
+}
+
+func TestSeedAudioDispatchDiagnosticsPreviewDoesNotReplaceFullBodyParser(t *testing.T) {
+	largeAudio := strings.Repeat("B", seedAudioDiagnosticsPreviewBytes+2048)
+	body := `{"audio":"` + largeAudio + `","duration":7.5,"original_duration":8.5,"url":"https://tmp.example.com/full-body.mp3"}`
+
+	result, diagnostics, apiErr := dispatchSeedAudioUpstreamTestResponse(t, http.StatusOK, map[string]string{
+		"Content-Type": "application/json",
+	}, body)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Equal(t, "https://tmp.example.com/full-body.mp3", result.URL)
+	require.Equal(t, largeAudio, result.Audio)
+	require.Equal(t, 7.5, result.Duration)
+	require.Equal(t, 8.5, result.OriginalDuration)
+	require.NotNil(t, diagnostics)
+	require.Equal(t, "gt_128kb", diagnostics.BodySizeBucket)
+	require.False(t, diagnostics.InvalidJSON)
+	diagnosticsJSON := seedAudioDiagnosticsJSON(diagnostics)
+	require.NotContains(t, diagnosticsJSON, largeAudio[:128])
+	require.NotContains(t, diagnosticsJSON, "full-body.mp3")
+}
+
+func TestSeedAudioDispatchValidJSONSchemaMismatchIsNotInvalidJSON(t *testing.T) {
+	result, diagnostics, apiErr := dispatchSeedAudioUpstreamTestResponse(t, http.StatusOK, map[string]string{
+		"Content-Type": "application/json",
+	}, `{"status":200,"headers":{"content-type":"application/json"},"body":{"audio":"base64-from-doc-wrapper","duration":1.25,"original_duration":1.5,"url":"https://tmp.example.com/wrapped.mp3"}}`)
+
+	require.Nil(t, result)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, "seed_audio_upstream_schema_error", apiErr.ToOpenAIError().Code)
+	require.NotNil(t, diagnostics)
+	require.Equal(t, "2xx", diagnostics.ResponseClass)
+	require.Equal(t, "json", diagnostics.ContentTypeClass)
+	require.False(t, diagnostics.InvalidJSON)
+	require.Equal(t, "upstream_schema_error", diagnostics.ErrorClass)
+}
+
+func TestSeedAudioDispatchZeroDurationIsSchemaErrorNotInvalidJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "zero duration",
+			body: `{"audio":"base64-audio","duration":0,"original_duration":1.25}`,
+		},
+		{
+			name: "zero original duration",
+			body: `{"audio":"base64-audio","duration":1.25,"original_duration":0}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, diagnostics, apiErr := dispatchSeedAudioUpstreamTestResponse(t, http.StatusOK, map[string]string{
+				"Content-Type": "application/json",
+			}, tt.body)
+
+			require.Nil(t, result)
+			require.NotNil(t, apiErr)
+			require.Equal(t, "seed_audio_upstream_schema_error", apiErr.ToOpenAIError().Code)
+			require.NotNil(t, diagnostics)
+			require.False(t, diagnostics.InvalidJSON)
+			require.Equal(t, "upstream_schema_error", diagnostics.ErrorClass)
+		})
+	}
+}
+
+func TestSeedAudioDispatchTruncatedJSONRemainsInvalidJSON(t *testing.T) {
+	result, diagnostics, apiErr := dispatchSeedAudioUpstreamTestResponse(t, http.StatusOK, map[string]string{
+		"Content-Type": "application/json",
+	}, `{"audio":"abc","duration":`)
+
+	require.Nil(t, result)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, "seed_audio_upstream_error", apiErr.ToOpenAIError().Code)
+	require.NotNil(t, diagnostics)
+	require.True(t, diagnostics.InvalidJSON)
+	require.Equal(t, "invalid_json", diagnostics.ErrorClass)
+}
+
 func TestSeedAudioValidationRejectsP0ExcludedInputs(t *testing.T) {
 	tooLong := strings.Repeat("界", seedAudioMaxTextRunes+1)
 	tests := []struct {
@@ -507,6 +645,7 @@ func TestSeedAudioUpstreamFailureRefundsAndStoresDiagnostics(t *testing.T) {
 	var row model.SeedAudioIdempotency
 	require.NoError(t, model.DB.Where("client_request_id = ?", "req_refund_failure").First(&row).Error)
 	require.Equal(t, model.SeedAudioIdempotencyStatusFailed, row.Status)
+	require.Equal(t, "log-refund-test", row.XTTLogID)
 	require.Equal(t, "seed_audio_upstream_error", row.ErrorCode)
 	require.Equal(t, http.StatusServiceUnavailable, row.ErrorStatusCode)
 	require.NotEmpty(t, row.ErrorDiagnostics)
@@ -523,6 +662,40 @@ func TestSeedAudioUpstreamFailureRefundsAndStoresDiagnostics(t *testing.T) {
 	require.NotContains(t, row.ErrorDiagnostics, "temporary service failure")
 	require.NotContains(t, row.ErrorDiagnostics, "hello")
 	require.NotContains(t, row.ErrorDiagnostics, "https://")
+}
+
+func TestSeedAudioHelperStoresXTTLogIDOnCompletedIdempotency(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Tt-Logid", "20260704162718764DD51B931CCBBB3CEF")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"audio":"base64-audio-not-persisted","duration":2.5,"original_duration":3.25,"url":"https://tmp.example.com/generated.mp3","code":0,"message":"ok"}`))
+	}))
+	defer upstream.Close()
+
+	body := `{
+		"model":"lsf-seed-audio-1.0-tenant-a",
+		"input":"hello",
+		"metadata":{"client_request_id":"req_logid_completed"}
+	}`
+	c, info, recorder := newSeedAudioHelperTestContext(t, body, upstream.URL)
+
+	apiErr := SeedAudioHelper(c, info)
+
+	require.Nil(t, apiErr)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamCalls))
+	require.NotContains(t, recorder.Body.String(), "base64-audio-not-persisted")
+
+	var row model.SeedAudioIdempotency
+	require.NoError(t, model.DB.Where("client_request_id = ?", "req_logid_completed").First(&row).Error)
+	require.Equal(t, model.SeedAudioIdempotencyStatusCompleted, row.Status)
+	require.Equal(t, "20260704162718764DD51B931CCBBB3CEF", row.XTTLogID)
+	require.Equal(t, "https://tmp.example.com/generated.mp3", row.TemporaryURL)
+	require.NotContains(t, row.ErrorDiagnostics, "base64-audio-not-persisted")
 }
 
 func TestSeedAudioQuotaMathUsesOriginalDurationAndGroupRatio(t *testing.T) {
@@ -818,6 +991,29 @@ func seedAudioTestRequest(t *testing.T, body string) (*dto.AudioRequest, map[str
 	var bodyMap map[string]interface{}
 	require.NoError(t, common.Unmarshal([]byte(body), &bodyMap))
 	return &req, bodyMap
+}
+
+func dispatchSeedAudioUpstreamTestResponse(t *testing.T, statusCode int, headers map[string]string, body string) (*seedAudioUpstreamResult, *dto.SeedAudioUpstreamDiagnostics, *types.NewAPIError) {
+	t.Helper()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for key, value := range headers {
+			w.Header().Set(key, value)
+		}
+		w.WriteHeader(statusCode)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer upstream.Close()
+
+	return seedAudioDispatchUpstream(newSeedAudioIdempotencyTestContext(), &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl: upstream.URL,
+			ApiKey:         "test-upstream-key",
+		},
+	}, &seedAudioNormalizedRequest{
+		TextPrompt:    "hello",
+		Format:        seedAudioDefaultFormat,
+		ReferenceMode: "text_only",
+	})
 }
 
 func newSeedAudioHelperTestContext(t *testing.T, body string, upstreamURL string) (*gin.Context, *relaycommon.RelayInfo, *httptest.ResponseRecorder) {

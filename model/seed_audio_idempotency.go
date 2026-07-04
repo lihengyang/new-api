@@ -61,6 +61,7 @@ type SeedAudioIdempotencyCompleteParams struct {
 type SeedAudioIdempotencyFailParams struct {
 	ID                 int64
 	RequestHMAC        string
+	XTTLogID           string
 	ErrorCode          string
 	ErrorStatusCode    int
 	ErrorDiagnostics   string
@@ -191,6 +192,7 @@ func FailSeedAudioIdempotency(params SeedAudioIdempotencyFailParams) error {
 			"updated_at":           updatedAt,
 			"request_hmac":         params.RequestHMAC,
 			"status":               SeedAudioIdempotencyStatusFailed,
+			"x_tt_logid":           params.XTTLogID,
 			"error_code":           params.ErrorCode,
 			"error_status_code":    params.ErrorStatusCode,
 			"error_diagnostics":    params.ErrorDiagnostics,

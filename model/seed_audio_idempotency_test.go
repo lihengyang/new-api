@@ -103,6 +103,7 @@ func TestFailSeedAudioIdempotencyStoresSanitizedError(t *testing.T) {
 	err = FailSeedAudioIdempotency(SeedAudioIdempotencyFailParams{
 		ID:                 row.ID,
 		RequestHMAC:        row.RequestHMAC,
+		XTTLogID:           "log_failure_sanitized",
 		ErrorCode:          "seed_audio_upstream_error",
 		ErrorStatusCode:    502,
 		ErrorDiagnostics:   `{"upstream_http_status":502,"response_class":"5xx"}`,
@@ -115,6 +116,7 @@ func TestFailSeedAudioIdempotencyStoresSanitizedError(t *testing.T) {
 	var reloaded SeedAudioIdempotency
 	require.NoError(t, DB.First(&reloaded, row.ID).Error)
 	require.Equal(t, SeedAudioIdempotencyStatusFailed, reloaded.Status)
+	require.Equal(t, "log_failure_sanitized", reloaded.XTTLogID)
 	require.Equal(t, "seed_audio_upstream_error", reloaded.ErrorCode)
 	require.Equal(t, 502, reloaded.ErrorStatusCode)
 	require.Equal(t, `{"upstream_http_status":502,"response_class":"5xx"}`, reloaded.ErrorDiagnostics)
