@@ -36,6 +36,7 @@ type SeedAudioIdempotency struct {
 	ActualQuota        int     `json:"actual_quota"`
 	ErrorCode          string  `json:"error_code" gorm:"type:varchar(128)"`
 	ErrorStatusCode    int     `json:"error_status_code"`
+	ErrorDiagnostics   string  `json:"-" gorm:"type:text"`
 	ExpiresAt          int64   `json:"expires_at" gorm:"index"`
 	TombstoneExpiresAt int64   `json:"tombstone_expires_at" gorm:"index"`
 }
@@ -62,6 +63,7 @@ type SeedAudioIdempotencyFailParams struct {
 	RequestHMAC        string
 	ErrorCode          string
 	ErrorStatusCode    int
+	ErrorDiagnostics   string
 	UpdatedAt          int64
 	ExpiresAt          int64
 	TombstoneExpiresAt int64
@@ -129,6 +131,7 @@ func ReclaimSeedAudioIdempotencyPending(id int64, expectedUpdatedAt int64, param
 			"actual_quota":         0,
 			"error_code":           "",
 			"error_status_code":    0,
+			"error_diagnostics":    "",
 			"expires_at":           params.ExpiresAt,
 			"tombstone_expires_at": params.TombstoneExpiresAt,
 		})
@@ -167,6 +170,7 @@ func CompleteSeedAudioIdempotency(params SeedAudioIdempotencyCompleteParams) err
 			"actual_quota":         params.Record.ActualQuota,
 			"error_code":           "",
 			"error_status_code":    0,
+			"error_diagnostics":    "",
 			"expires_at":           params.ExpiresAt,
 			"tombstone_expires_at": params.TombstoneExpiresAt,
 		})
@@ -189,6 +193,7 @@ func FailSeedAudioIdempotency(params SeedAudioIdempotencyFailParams) error {
 			"status":               SeedAudioIdempotencyStatusFailed,
 			"error_code":           params.ErrorCode,
 			"error_status_code":    params.ErrorStatusCode,
+			"error_diagnostics":    params.ErrorDiagnostics,
 			"expires_at":           params.ExpiresAt,
 			"tombstone_expires_at": params.TombstoneExpiresAt,
 		})
@@ -236,6 +241,7 @@ func (row SeedAudioIdempotency) ToRecord() dto.SeedAudioIdempotencyRecord {
 		CreatedAt:        row.CreatedAt,
 		ErrorCode:        row.ErrorCode,
 		ErrorStatusCode:  row.ErrorStatusCode,
+		ErrorDiagnostics: row.ErrorDiagnostics,
 	}
 }
 

@@ -20,6 +20,98 @@ Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED`
 - Later docs-only commits do not change the frozen production candidate image
   tag or source traceability.
 
+## RC1 Reliability / Admin UI Batch
+
+Batch name: `seed-audio-p01-reliability-admin-ui-rc1`
+
+Scope:
+
+- Seed Audio local `text_prompt` validation now uses the current official
+  `3000` character limit. Older `2048` references are stale.
+- Validation counts the final upstream payload:
+  trimmed `instructions` + newline + trimmed `input`.
+- More than `3000` characters is rejected locally with
+  `seed_audio_input_too_long` before idempotency record creation, precharge, or
+  upstream dispatch.
+- Upstream failure handling stores sanitized diagnostics on failed
+  `seed_audio_idempotencies` rows, searchable by `client_request_id`. Stored
+  diagnostics include HTTP status class, content-type class, bounded safe
+  request/log IDs, latency, body-size bucket, response class, safe
+  `ResponseMetadata.RequestId`, and marker flags only. Raw upstream bodies,
+  raw prompts, raw reference URLs, temporary output URLs, ProjectName, bearer
+  keys, AK/SK, SQL_DSN, and internal channel/group identifiers are not stored.
+- Invalid JSON, HTML/Cloudflare-like bodies, upstream 4xx/5xx JSON, and
+  timeout/network failures remain generic customer-facing upstream errors
+  unless the body looks like a provider-side reference fetch/access failure,
+  which remains `invalid_reference_url`.
+- A failed idempotent upstream attempt remains tied to its original
+  `metadata.client_request_id`; customers should use a fresh
+  `metadata.client_request_id` for a new upstream attempt.
+- SFX and ambience descriptions are not locally rejected. Exact upstream
+  behavior may differ between the domestic doubao console and BytePlus Global
+  API.
+- Admin `/console/token` page-size changes are guarded against invalid,
+  duplicate, loading, and searching-state reloads; initialization is mount-only
+  and search mode remains on the search endpoint during page-size changes.
+
+Customer-guide update status:
+
+- Customer guide updates are draft-only and remain a separate approval gate.
+- Do not include or modify unapproved customer DOCX paths unless Henry
+  explicitly approves the exact customer-doc path.
+
+## RC1 Production Closeout
+
+Henry approved production deploy for
+`seed-audio-p01-reliability-admin-ui-rc1` on 2026-07-04.
+
+Deployment identity:
+
+- Production container: `new-api-nightly`
+- Production image:
+  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
+- Source revision:
+  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
+- Scope: deployed to production `new-api-nightly` only.
+- Rollback container:
+  `new-api-nightly-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
+- Rollback image tag:
+  `new-api:rollback-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
+
+Post-deploy verification:
+
+- Local `/api/status`: PASS, HTTP `200` JSON.
+- Public `/api/status`: PASS, HTTP `200` JSON.
+- Production container restart count: `0`.
+- Production DB baseline: MySQL.
+- `seed_audio_idempotencies.error_diagnostics`: present as nullable `TEXT`.
+- Seed Audio `3001` character local rejection: PASS with HTTP `400`
+  `seed_audio_input_too_long`.
+- `3001` rejection created no Seed Audio idempotency row and no charge,
+  consistent with no upstream dispatch.
+- Seed Audio `3000` character validation path: PASS; request was not rejected
+  as `seed_audio_input_too_long`.
+- Minimal paid Seed Audio success smoke: PASS.
+- Replay of the same `metadata.client_request_id`: PASS; no duplicate charge.
+- Sensitive/log scan: PASS for forbidden disclosures. No credentials, AK/SK,
+  SQL_DSN, bearer token, ProjectName value, internal channel/group value, raw
+  prompt, raw reference URL, temporary output URL, raw upstream body, or
+  signature marker was exposed in the closeout evidence.
+- Production `/console/token` manual check: PASS.
+  - Page-size `10 -> 20`: no flicker, no request storm, no HTTP `429`.
+  - Page-size `20 -> 10`: normal.
+  - Search-mode page-size change stayed in filtered result view.
+
+Closeout boundaries:
+
+- Customer guide files were not modified.
+- Untracked customer DOCX
+  `docs/customer/Light Speed Future API Integration Guide v2.2.0.docx`
+  remains untracked and untouched.
+- No push has been performed yet.
+- This closeout is internal only and does not change customer-facing guide
+  content.
+
 ## Production Gate 0 Read-only Reconnaissance
 
 Henry approved Gate 0 read-only production reconnaissance only. No production
@@ -463,6 +555,9 @@ P0 rejects:
 - non-`mp3` response formats
 
 Request bodies are capped at 128 KB before upstream dispatch.
+Seed Audio `text_prompt` is capped at `3000` characters after combining
+trimmed `instructions` and trimmed `input`; older `2048` local-limit references
+are stale.
 
 ## Billing Invariant
 

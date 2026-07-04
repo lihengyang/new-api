@@ -170,6 +170,19 @@ filename once said so.
 Correct: the final Seed Audio Production Edition customer-guide version is
 v2.2.0. Treat v2.0.0 as a filename mistake, not a release fact.
 
+Wrong: Seed Audio still has a local `2048` character text limit or validates
+only `input`.
+
+Correct: the current official Seed Audio `text_prompt` limit is `3000`
+characters, and local validation counts the final combined trimmed
+`instructions` + newline + trimmed `input` payload.
+
+Wrong: a failed Seed Audio upstream attempt should be retried with the same
+`metadata.client_request_id`.
+
+Correct: failed idempotency records remain tied to the original
+`client_request_id`; a new upstream attempt needs a fresh client request ID.
+
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.

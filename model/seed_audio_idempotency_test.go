@@ -105,6 +105,7 @@ func TestFailSeedAudioIdempotencyStoresSanitizedError(t *testing.T) {
 		RequestHMAC:        row.RequestHMAC,
 		ErrorCode:          "seed_audio_upstream_error",
 		ErrorStatusCode:    502,
+		ErrorDiagnostics:   `{"upstream_http_status":502,"response_class":"5xx"}`,
 		UpdatedAt:          1400,
 		ExpiresAt:          2000,
 		TombstoneExpiresAt: 3000,
@@ -116,6 +117,8 @@ func TestFailSeedAudioIdempotencyStoresSanitizedError(t *testing.T) {
 	require.Equal(t, SeedAudioIdempotencyStatusFailed, reloaded.Status)
 	require.Equal(t, "seed_audio_upstream_error", reloaded.ErrorCode)
 	require.Equal(t, 502, reloaded.ErrorStatusCode)
+	require.Equal(t, `{"upstream_http_status":502,"response_class":"5xx"}`, reloaded.ErrorDiagnostics)
+	require.Equal(t, reloaded.ErrorDiagnostics, reloaded.ToRecord().ErrorDiagnostics)
 	require.EqualValues(t, 1400, reloaded.UpdatedAt)
 }
 
@@ -150,5 +153,6 @@ func TestReclaimSeedAudioIdempotencyPendingAfterTombstoneExpiry(t *testing.T) {
 	require.Equal(t, SeedAudioIdempotencyStatusPending, reclaimed.Status)
 	require.Equal(t, "new_hmac", reclaimed.RequestHMAC)
 	require.Empty(t, reclaimed.ErrorCode)
+	require.Empty(t, reclaimed.ErrorDiagnostics)
 	require.EqualValues(t, 1400, reclaimed.CreatedAt)
 }

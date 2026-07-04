@@ -4,10 +4,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -65,6 +68,79 @@ func TestSeedAudioNormalizePreservesZeroAudioConfig(t *testing.T) {
 	require.Contains(t, upstreamJSON, `"speech_rate":0`)
 	require.Contains(t, upstreamJSON, `"loudness_rate":0`)
 	require.Contains(t, upstreamJSON, `"pitch_rate":0`)
+}
+
+func TestSeedAudioTextPromptLimitUsesCombinedTrimmedRunes(t *testing.T) {
+	tests := []struct {
+		name         string
+		instructions string
+		input        string
+		wantRunes    int
+		wantCode     string
+	}{
+		{
+			name:      "2048 chinese characters pass",
+			input:     strings.Repeat("界", 2048),
+			wantRunes: 2048,
+		},
+		{
+			name:      "2049 chinese characters pass",
+			input:     strings.Repeat("界", 2049),
+			wantRunes: 2049,
+		},
+		{
+			name:      "2999 chinese characters pass",
+			input:     strings.Repeat("界", 2999),
+			wantRunes: 2999,
+		},
+		{
+			name:      "3000 chinese characters pass",
+			input:     strings.Repeat("界", 3000),
+			wantRunes: 3000,
+		},
+		{
+			name:     "3001 chinese characters fail",
+			input:    strings.Repeat("界", 3001),
+			wantCode: "seed_audio_input_too_long",
+		},
+		{
+			name:         "combined instructions newline input exact limit passes",
+			instructions: strings.Repeat("你", 1000),
+			input:        strings.Repeat("好", 1999),
+			wantRunes:    3000,
+		},
+		{
+			name:         "combined instructions newline input over limit fails",
+			instructions: strings.Repeat("你", 1000),
+			input:        strings.Repeat("好", 2000),
+			wantCode:     "seed_audio_input_too_long",
+		},
+		{
+			name:         "trimmed unicode prompt uses final upstream text_prompt length",
+			instructions: "  " + strings.Repeat("声", 1000) + "  ",
+			input:        "\n" + strings.Repeat("音", 1999) + "\n",
+			wantRunes:    3000,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normalized, apiErr := buildSeedAudioNormalizedRequest(&dto.AudioRequest{
+				Model:        "lsf-seed-audio-1.0-tenant-a",
+				Instructions: tt.instructions,
+				Input:        tt.input,
+			}, map[string]interface{}{})
+
+			if tt.wantCode != "" {
+				require.Nil(t, normalized)
+				require.NotNil(t, apiErr)
+				require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+				require.Equal(t, tt.wantCode, apiErr.ToOpenAIError().Code)
+				return
+			}
+			require.Nil(t, apiErr)
+			require.Equal(t, tt.wantRunes, utf8.RuneCountInString(normalized.TextPrompt))
+		})
+	}
 }
 
 func TestSeedAudioUpstreamReferenceMapping(t *testing.T) {
@@ -141,6 +217,123 @@ func TestSeedAudioUpstreamServiceErrorsRemainUpstreamError(t *testing.T) {
 	require.Equal(t, "seed_audio_upstream_error", apiErr.ToOpenAIError().Code)
 }
 
+func TestSeedAudioUpstreamDiagnosticsClassifyFailures(t *testing.T) {
+	t.Run("4xx json", func(t *testing.T) {
+		body := []byte(`{"ResponseMetadata":{"RequestId":"req-json-4xx"},"error":{"message":"bad request"}}`)
+		resp := &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header: http.Header{
+				"Content-Type":  []string{"application/json"},
+				"X-Tt-Logid":    []string{"log-4xx"},
+				"X-Tt-Trace-Id": []string{"trace-4xx"},
+				"Request-Id":    []string{"request-4xx"},
+				"X-Request-Id":  []string{"x-request-4xx"},
+			},
+		}
+		diagnostics := seedAudioBuildUpstreamDiagnostics(resp, body, 23*time.Millisecond)
+		apiErr := seedAudioUpstreamStatusErrorWithDiagnostics(resp.StatusCode, body, diagnostics)
+
+		require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+		require.Equal(t, "json", diagnostics.ContentTypeClass)
+		require.Equal(t, "4xx", diagnostics.ResponseClass)
+		require.Equal(t, "upstream_http_4xx_json", diagnostics.ErrorClass)
+		require.Equal(t, "log-4xx", diagnostics.XTTLogID)
+		require.Equal(t, "trace-4xx", diagnostics.XTTTraceID)
+		require.Equal(t, "request-4xx", diagnostics.RequestID)
+		require.Equal(t, "x-request-4xx", diagnostics.XRequestID)
+		require.Equal(t, "req-json-4xx", diagnostics.ResponseMetadataRequestID)
+		require.Equal(t, int64(23), diagnostics.LatencyMS)
+		require.Equal(t, "le_1kb", diagnostics.BodySizeBucket)
+	})
+
+	t.Run("5xx json", func(t *testing.T) {
+		body := []byte(`{"ResponseMetadata":{"RequestId":"req-json-5xx"},"error":{"message":"service unavailable"}}`)
+		resp := &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		}
+		diagnostics := seedAudioBuildUpstreamDiagnostics(resp, body, 41*time.Millisecond)
+		apiErr := seedAudioUpstreamStatusErrorWithDiagnostics(resp.StatusCode, body, diagnostics)
+
+		require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+		require.Equal(t, "5xx", diagnostics.ResponseClass)
+		require.Equal(t, "upstream_http_5xx_json", diagnostics.ErrorClass)
+		require.Equal(t, "req-json-5xx", diagnostics.ResponseMetadataRequestID)
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		body := []byte(`{"error":`)
+		resp := &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+		diagnostics := seedAudioBuildUpstreamDiagnostics(resp, body, 10*time.Millisecond)
+		apiErr := seedAudioUpstreamStatusErrorWithDiagnostics(resp.StatusCode, body, diagnostics)
+
+		require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+		require.True(t, diagnostics.InvalidJSON)
+		require.Equal(t, "upstream_http_5xx_invalid_json", diagnostics.ErrorClass)
+	})
+
+	t.Run("html cloudflare marker", func(t *testing.T) {
+		body := []byte(`<!doctype html><html><title>Attention Required!</title><body>Cloudflare cf-ray</body></html>`)
+		resp := &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+		}
+		diagnostics := seedAudioBuildUpstreamDiagnostics(resp, body, 15*time.Millisecond)
+		apiErr := seedAudioUpstreamStatusErrorWithDiagnostics(resp.StatusCode, body, diagnostics)
+		diagnosticsJSON := seedAudioDiagnosticsJSON(diagnostics)
+
+		require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+		require.Equal(t, "html", diagnostics.ContentTypeClass)
+		require.True(t, diagnostics.HTML)
+		require.True(t, diagnostics.CloudflareLike)
+		require.Equal(t, "upstream_http_5xx_cloudflare", diagnostics.ErrorClass)
+		require.NotContains(t, diagnosticsJSON, "Attention Required")
+		require.NotContains(t, diagnosticsJSON, "cf-ray")
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		diagnostics := seedAudioUpstreamDiagnosticsForError(nil, 1500*time.Millisecond, "timeout")
+
+		require.Equal(t, "timeout", diagnostics.ResponseClass)
+		require.Equal(t, "timeout", diagnostics.ErrorClass)
+		require.Equal(t, int64(1500), diagnostics.LatencyMS)
+		require.Equal(t, "empty", diagnostics.BodySizeBucket)
+	})
+}
+
+func TestSeedAudioDispatchInvalidJSONDiagnostics(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":`))
+	}))
+	defer upstream.Close()
+
+	c := newSeedAudioIdempotencyTestContext()
+	result, diagnostics, apiErr := seedAudioDispatchUpstream(c, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl: upstream.URL,
+			ApiKey:         "test-upstream-key",
+		},
+	}, &seedAudioNormalizedRequest{
+		TextPrompt:    "hello",
+		Format:        seedAudioDefaultFormat,
+		ReferenceMode: "text_only",
+	})
+
+	require.Nil(t, result)
+	require.NotNil(t, apiErr)
+	require.NotNil(t, diagnostics)
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, "seed_audio_upstream_error", apiErr.ToOpenAIError().Code)
+	require.Equal(t, "2xx", diagnostics.ResponseClass)
+	require.True(t, diagnostics.InvalidJSON)
+	require.Equal(t, "invalid_json", diagnostics.ErrorClass)
+}
+
 func TestSeedAudioValidationRejectsP0ExcludedInputs(t *testing.T) {
 	tooLong := strings.Repeat("界", seedAudioMaxTextRunes+1)
 	tests := []struct {
@@ -189,7 +382,7 @@ func TestSeedAudioValidationRejectsP0ExcludedInputs(t *testing.T) {
 			name:       "too long",
 			body:       `{"model":"lsf-seed-audio-1.0-a","input":"` + tooLong + `"}`,
 			statusCode: http.StatusBadRequest,
-			code:       "invalid_request_error",
+			code:       "seed_audio_input_too_long",
 		},
 		{
 			name:       "private ip reference",
@@ -238,6 +431,98 @@ func TestSeedAudioValidationRejectsP0ExcludedInputs(t *testing.T) {
 			require.Equal(t, tt.code, apiErr.ToOpenAIError().Code)
 		})
 	}
+}
+
+func TestSeedAudioTooLongRequestStopsBeforeIdempotencyBillingAndUpstream(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	body := `{
+		"model":"lsf-seed-audio-1.0-tenant-a",
+		"input":"` + strings.Repeat("界", seedAudioMaxTextRunes+1) + `",
+		"metadata":{"client_request_id":"req_too_long"}
+	}`
+	c, info, _ := newSeedAudioHelperTestContext(t, body, upstream.URL)
+
+	apiErr := SeedAudioHelper(c, info)
+
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	require.Equal(t, "seed_audio_input_too_long", apiErr.ToOpenAIError().Code)
+	require.EqualValues(t, 0, atomic.LoadInt32(&upstreamCalls))
+	require.Nil(t, info.Billing)
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.SeedAudioIdempotency{}).
+		Where("client_request_id = ?", "req_too_long").
+		Count(&count).Error)
+	require.Zero(t, count)
+
+	var user model.User
+	require.NoError(t, model.DB.First(&user, 1001).Error)
+	require.Equal(t, 1_000_000, user.Quota)
+}
+
+func TestSeedAudioUpstreamFailureRefundsAndStoresDiagnostics(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Tt-Logid", "log-refund-test")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"req-refund-test"},"error":{"message":"temporary service failure"}}`))
+	}))
+	defer upstream.Close()
+
+	body := `{
+		"model":"lsf-seed-audio-1.0-tenant-a",
+		"input":"hello",
+		"metadata":{"client_request_id":"req_refund_failure"}
+	}`
+	c, info, _ := newSeedAudioHelperTestContext(t, body, upstream.URL)
+
+	apiErr := SeedAudioHelper(c, info)
+
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	require.Equal(t, "seed_audio_upstream_error", apiErr.ToOpenAIError().Code)
+	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamCalls))
+	require.NotNil(t, info.Billing)
+
+	require.Eventually(t, func() bool {
+		var user model.User
+		if err := model.DB.First(&user, 1001).Error; err != nil {
+			return false
+		}
+		return user.Quota == 1_000_000
+	}, 2*time.Second, 10*time.Millisecond)
+
+	var row model.SeedAudioIdempotency
+	require.NoError(t, model.DB.Where("client_request_id = ?", "req_refund_failure").First(&row).Error)
+	require.Equal(t, model.SeedAudioIdempotencyStatusFailed, row.Status)
+	require.Equal(t, "seed_audio_upstream_error", row.ErrorCode)
+	require.Equal(t, http.StatusServiceUnavailable, row.ErrorStatusCode)
+	require.NotEmpty(t, row.ErrorDiagnostics)
+
+	var diagnostics dto.SeedAudioUpstreamDiagnostics
+	require.NoError(t, common.Unmarshal([]byte(row.ErrorDiagnostics), &diagnostics))
+	require.Equal(t, http.StatusInternalServerError, diagnostics.UpstreamHTTPStatus)
+	require.Equal(t, "5xx", diagnostics.ResponseClass)
+	require.Equal(t, "json", diagnostics.ContentTypeClass)
+	require.Equal(t, "upstream_http_5xx_json", diagnostics.ErrorClass)
+	require.Equal(t, "log-refund-test", diagnostics.XTTLogID)
+	require.Equal(t, "req-refund-test", diagnostics.ResponseMetadataRequestID)
+	require.Equal(t, "le_1kb", diagnostics.BodySizeBucket)
+	require.NotContains(t, row.ErrorDiagnostics, "temporary service failure")
+	require.NotContains(t, row.ErrorDiagnostics, "hello")
+	require.NotContains(t, row.ErrorDiagnostics, "https://")
 }
 
 func TestSeedAudioQuotaMathUsesOriginalDurationAndGroupRatio(t *testing.T) {
@@ -533,6 +818,37 @@ func seedAudioTestRequest(t *testing.T, body string) (*dto.AudioRequest, map[str
 	var bodyMap map[string]interface{}
 	require.NoError(t, common.Unmarshal([]byte(body), &bodyMap))
 	return &req, bodyMap
+}
+
+func newSeedAudioHelperTestContext(t *testing.T, body string, upstreamURL string) (*gin.Context, *relaycommon.RelayInfo, *httptest.ResponseRecorder) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("token_name", "relay-task-test-token")
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstreamURL)
+	common.SetContextKey(c, constant.ContextKeyChannelKey, "test-upstream-key")
+	common.SetContextKey(c, constant.ContextKeyChannelId, 77)
+
+	var req dto.AudioRequest
+	require.NoError(t, common.Unmarshal([]byte(body), &req))
+	info := &relaycommon.RelayInfo{
+		UserId:          1001,
+		TokenId:         501,
+		TokenKey:        "test-token",
+		UsingGroup:      "test-group",
+		UserGroup:       "test-group",
+		OriginModelName: "lsf-seed-audio-1.0-tenant-a",
+		StartTime:       time.Now(),
+		IsPlayground:    true,
+		UserSetting: dto.UserSetting{
+			BillingPreference: "wallet_only",
+		},
+		Request: &req,
+	}
+	return c, info, recorder
 }
 
 func newSeedAudioIdempotencyTestContext() *gin.Context {

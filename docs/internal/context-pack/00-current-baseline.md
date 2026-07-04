@@ -2,23 +2,28 @@
 
 Product: Light Speed Future Seedance 2.0 API proxy based on customized new-api nightly.
 
-Current production release status as of the 2026-06-28 Seedance Mini Scheme B
-billing hotfix, production validation, and quota correction:
+Current production release status as of the 2026-07-04 Seed Audio P01
+reliability/admin UI production closeout:
 
-- Status: `PRODUCTION_DEPLOY_PASSED`
+- Status: `PRODUCTION_DEPLOY_PASSED / SEED_AUDIO_P01_RELIABILITY_ADMIN_UI_RC1`
 - Production container: `new-api-nightly`
-- Current production image: `new-api:seedance-mini-billing-scheme-b-rc1`
-- Current production image ID prefix: `c991ffe082dc`
-- Current code / OCI revision: `9ef110f928f40a88bf426432db08807b9edf89cb`
-- Previous production image: `new-api:seedance-mini-rc1`
-- Previous production revision: `4262bb9a52a8fd67f339d830b87f9201ac8f7bec`
+- Current production image:
+  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
+- Current production image ID prefix: `2c55d6f3eff3`
+- Current code / OCI revision:
+  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
+- Previous production image: `new-api:seed-audio-p0-prod-20260702-303d4ea`
+- Previous production revision:
+  `303d4ea3efa0a3317a22d4232348bf623a9228f8`
 - Preserved rollback container:
-  `new-api-nightly-before-seedance-mini-billing-scheme-b-20260628T030527Z`
+  `new-api-nightly-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
+- Preserved rollback image tag:
+  `new-api:rollback-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
 
-The Scheme B hotfix production deployment used the preflight-validated
-artifact. It was not rebuilt from docs-only commits. The rollback artifact must
-remain available through the observation window unless Henry explicitly retires
-it.
+The Seed Audio P01 reliability/admin UI production deployment used the
+preflight-validated artifact built from the recorded source revision. The
+rollback artifact must remain available through the observation window unless
+Henry explicitly retires it.
 
 Production domain:
 
@@ -37,14 +42,24 @@ Supported P1 customer endpoint:
 
 Seed Audio P0 customer release status:
 
-- Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED`
+- Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED / P01_RELIABILITY_DEPLOYED`
 - Customer audio endpoint: `POST /v1/audio/speech`
 - Customer-facing modes: `text_only`, `audio_url`, `image_url`
 - Retry safety: `metadata.client_request_id`
+- Current Seed Audio `text_prompt` limit: `3000` characters. Older `2048`
+  references are stale.
+- Seed Audio combines trimmed `instructions` and trimmed `input` into the
+  upstream `text_prompt`; both fields count toward the `3000` character limit.
 - Final customer guide:
   `Light_Speed_Future_API_Integration_Guide_v2.2.0_Seed_Audio_Production_Edition.docx`
 - v2.2.0 supersedes v2.1.4 for active onboarding unless a tenant-specific note
   says otherwise.
+- P01 closeout: Seed Audio `3001` character local rejection passed with no
+  charge/no upstream dispatch; `3000` characters were not rejected as too long;
+  minimal paid success and replay passed without duplicate charge; sanitized
+  upstream diagnostics schema is present; production `/console/token`
+  page-size changes passed manual verification without flicker, request storm,
+  or HTTP `429`.
 
 `metadata.client_request_id` is optional and supported for `POST /v1/videos`.
 
