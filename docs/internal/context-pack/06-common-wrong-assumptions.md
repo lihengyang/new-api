@@ -126,6 +126,26 @@ Correct: balance gate failure is first a key, client, or tenant configuration
 blocker unless independent runtime evidence proves otherwise. Stop before paid
 smoke when the balance gate fails.
 
+Wrong: a Henry/LSF `henrytest` token can be paired with a customer model alias
+or customer balance for internal production smoke.
+
+Correct: `henrytest` is an internal testing account/model-entry convention.
+Use the approved internal token only with the matching internal test alias, such
+as `lsf-seed-audio-1.0-henrytest` for Seed Audio. Never use customer tokens,
+customer aliases, customer groups, or customer balances for internal smoke. If
+the internal token and alias do not match, stop for Henry input instead of
+switching to an unknown or customer alias.
+
+Wrong: a capped diagnostics preview can be reused as the Seed Audio business
+JSON parser input.
+
+Correct: Seed Audio business parsing must use the full upstream response body.
+Diagnostics preview is only sanitized troubleshooting evidence. The official
+Seed Audio 1.0 success response uses top-level `audio`, fallback `data`, `url`,
+`duration`, and `original_duration` fields; valid JSON with missing required
+success fields is a schema error, while `invalid_json` is reserved for
+genuinely invalid or truncated JSON.
+
 Wrong: passing Mini no-video production smoke authorizes additional paid
 production video tasks.
 

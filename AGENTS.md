@@ -14,6 +14,12 @@ Do not modify production without explicit approval.
 
 Default workflow: local branch -> local tests -> preflight -> production only after explicit approval.
 
+`henrytest` is a Henry/LSF internal testing account/model entry. Internal smoke
+must use the approved internal token with the matching internal test alias.
+Never use customer token, customer alias, customer group, or customer balance
+for internal smoke; stop for Henry input if the internal token and alias do not
+match.
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.

@@ -2,26 +2,25 @@
 
 Product: Light Speed Future Seedance 2.0 API proxy based on customized new-api nightly.
 
-Current production release status as of the 2026-07-04 Seed Audio P01
-reliability/admin UI production closeout:
+Current production release status as of the 2026-07-04 Seed Audio parser
+hotfix production closeout:
 
-- Status: `PRODUCTION_DEPLOY_PASSED / SEED_AUDIO_P01_RELIABILITY_ADMIN_UI_RC1`
+- Status: `PRODUCTION_DEPLOY_PASSED / SEED_AUDIO_PARSER_HOTFIX_RC1`
 - Production container: `new-api-nightly`
 - Current production image:
-  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
-- Current production image ID prefix: `2c55d6f3eff3`
+  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
+- Current production image ID prefix: `dda5be8c7020`
 - Current code / OCI revision:
-  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
-- Previous production image: `new-api:seed-audio-p0-prod-20260702-303d4ea`
+  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
+- Previous production image:
+  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
 - Previous production revision:
-  `303d4ea3efa0a3317a22d4232348bf623a9228f8`
+  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
 - Preserved rollback container:
-  `new-api-nightly-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
-- Preserved rollback image tag:
-  `new-api:rollback-before-seed-audio-p01-reliability-admin-ui-rc1-20260704T031037Z`
+  `new-api-nightly-before-seed-audio-parser-hotfix-rc1-20260704T173731Z`
 
-The Seed Audio P01 reliability/admin UI production deployment used the
-preflight-validated artifact built from the recorded source revision. The
+The Seed Audio parser hotfix production deployment used the preflight-validated
+artifact built from the recorded source revision. The
 rollback artifact must remain available through the observation window unless
 Henry explicitly retires it.
 
@@ -42,7 +41,7 @@ Supported P1 customer endpoint:
 
 Seed Audio P0 customer release status:
 
-- Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED / P01_RELIABILITY_DEPLOYED`
+- Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED / PARSER_HOTFIX_DEPLOYED`
 - Customer audio endpoint: `POST /v1/audio/speech`
 - Customer-facing modes: `text_only`, `audio_url`, `image_url`
 - Retry safety: `metadata.client_request_id`
@@ -60,6 +59,16 @@ Seed Audio P0 customer release status:
   upstream diagnostics schema is present; production `/console/token`
   page-size changes passed manual verification without flicker, request storm,
   or HTTP `429`.
+- Parser hotfix closeout: the production response adapter now parses the
+  official top-level Seed Audio 1.0 success fields `audio`, fallback `data`,
+  `url`, `duration`, and `original_duration` from the full upstream response
+  body. Diagnostics preview remains capped and sanitized, but it is not used as
+  the business JSON parse input. Valid JSON schema mismatches are classified as
+  schema errors, not `invalid_json`; only genuinely invalid or truncated JSON is
+  `invalid_json`. Production internal Smoke A/B/C passed with the Henry/LSF
+  `henrytest` testing alias `lsf-seed-audio-1.0-henrytest`; complex SFX
+  generation passed, replay did not duplicate billing, and raw data leakage was
+  not observed.
 
 `metadata.client_request_id` is optional and supported for `POST /v1/videos`.
 

@@ -90,6 +90,14 @@ For Mac Codex App smoke, the smoke key procedure is:
 - do not use temporary secret files;
 - do not guess or recover API tokens from the DB.
 
+`henrytest` is a Henry/LSF internal testing account and model-entry convention.
+Internal smoke must use the approved internal token with the matching internal
+test alias, for example `lsf-seed-audio-1.0-henrytest` for Seed Audio. Never
+use a customer token, customer alias, customer group, or customer balance for
+internal smoke. If the approved internal token cannot access the intended
+internal alias, stop and ask Henry to fix or confirm the token/alias mapping;
+do not silently switch to a customer alias.
+
 A production balance/auth 403 from a local smoke client is not by itself a
 rollback trigger when runtime health is stable. First separate client transport,
 Keychain value, and tenant configuration problems from production runtime

@@ -26,6 +26,19 @@ sanitized operational evidence that must not be copied into customer docs.
 - Reference URL caveat: public HTTPS and provider-accessible are required;
   browser-accessible does not guarantee provider-side access or processing.
 
+## Seed Audio Parser Hotfix
+
+- Record: `2026-07-04-seed-audio-parser-hotfix-production.md`
+- Final status: `PRODUCTION_DEPLOY_PASSED`
+- Production image:
+  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
+- Source / OCI revision:
+  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
+- Scope: internal response-adapter hotfix for official top-level Seed Audio
+  success schema parsing. Customer documentation was not changed.
+- Internal smoke used the Henry/LSF `henrytest` testing account/model entry,
+  not a customer token, customer alias, customer group, or customer balance.
+
 ## Documentation Guardrails
 
 - Do not publish customer files with `_FIXED`, `_DRAFT`, `_REJECTED`, or wrong
