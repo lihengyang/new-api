@@ -18,3 +18,10 @@ behavior. They must not expose ProjectName, upstream model names, internal
 channel/group/project configuration, quota formulas, group ratios, test
 balances, commit/image evidence, raw prompts, raw reference URLs, temporary
 output URLs, or production smoke details.
+
+Seed Audio error usage diagnostics are admin-only operational data. Admin usage
+logs may show redacted request/error diagnostics for upstream-dispatched
+failures, but `/api/log/self`, `/api/log/token`, and other user-facing log
+paths must be backend-sanitized. User-facing logs must not expose
+`client_request_id`, `upstream_request_id`, `error_code`, `http_status`,
+`retryable`, or `other.seed_audio_error` for Seed Audio error diagnostics.

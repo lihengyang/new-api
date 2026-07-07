@@ -55,6 +55,22 @@ customer availability:
 Post-release documentation updates should not run additional paid production
 smoke unless Henry explicitly approves the extra cost and scope.
 
+Usage-error-log releases that add structured diagnostics fields or indexes must
+include:
+
+- MySQL preflight schema/index verification;
+- production DDL risk review for large logs tables;
+- exact `client_request_id` lookup EXPLAIN;
+- real Request ID search EXPLAIN for
+  `request_id OR client_request_id OR upstream_request_id`;
+- admin visibility verification for redacted diagnostics;
+- backend sanitization verification for `/api/log/self` and token-facing log
+  APIs;
+- stat verification that `LogTypeError` rows are excluded from consume quota
+  totals;
+- rollback notes that code rollback does not automatically remove AutoMigrate
+  columns or indexes.
+
 Customer documentation release workflow:
 
 - Keep customer guide edits, internal release-note updates, pushes, builds,

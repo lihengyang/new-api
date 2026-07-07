@@ -22,6 +22,13 @@ Failed idempotent upstream attempts remain searchable by
 `metadata.client_request_id`; retrying a new upstream attempt requires a fresh
 client request ID.
 
+Seed Audio upstream-dispatched failure diagnostics are written as zero-cost
+`LogTypeError` usage logs for admin troubleshooting. These error logs must have
+zero quota/cost/amount semantics, must not change balance, and must not be
+counted by `/api/log/stat` or `/api/log/self/stat` consume-quota totals.
+User-facing and token-facing usage log APIs must sanitize Seed Audio error
+diagnostics.
+
 For commercial billing conclusions, verify current logs and DB behavior rather than relying on upstream new-api assumptions.
 
 ## Billing Release Invariants

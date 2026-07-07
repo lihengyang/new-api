@@ -1,20 +1,23 @@
 # Environments
 
-Current verified release facts as of the 2026-07-04 Seed Audio parser hotfix
+Current verified release facts as of the 2026-07-07 Seed Audio error usage log
 production closeout:
 
 - Production container: `new-api-nightly`
 - Production current image:
-  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
-- Production current image ID prefix: `dda5be8c7020`
+  `new-api:seed-audio-error-logs-prod-candidate-6107eb4d`
+- Production current image ID:
+  `sha256:65718430ecddd230d5905ad803cc8e023a9335128eb5ac58c6d560c186cffe98`
 - Production source revision:
-  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
+  `6107eb4db3b4cce2291c78c69db4aa12b8422163`
 - Previous production image:
-  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
+  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
 - Previous production revision:
-  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
+  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
 - Retained rollback container:
-  `new-api-nightly-before-seed-audio-parser-hotfix-rc1-20260704T173731Z`
+  `new-api-nightly-before-seed-audio-error-logs-6107eb4d-20260707T164119Z`
+- Rollback image:
+  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
 - Production DB: MySQL 8.0.43-34
 - Production DB name: `lsf_newapi_prod`
 - Production DB fingerprint: `1e7c66a33168567c`
@@ -25,8 +28,19 @@ production closeout:
 - Preflight DB fingerprint: `e2546ab4e0b7a4a5`
 - Production and preflight DB targets are different.
 - Production rollout health checks passed through `/api/status` after the Seed
-  Audio parser hotfix deployment.
-- Production container restart count was `0` at closeout.
+  Audio error usage log deployment.
+- Production container restart count was `0` during deploy validation.
+- Production logs table includes nullable Seed Audio diagnostics columns:
+  `client_request_id`, `upstream_request_id`, `error_code`, `http_status`, and
+  `retryable`.
+- Production logs table includes
+  `idx_logs_client_request_id_created_at(client_request_id, created_at)` and
+  `idx_logs_upstream_request_id(upstream_request_id)`. It does not include
+  standalone `idx_logs_error_code` or `idx_logs_http_status`.
+- MySQL EXPLAIN passed for exact `client_request_id` lookup and the real admin
+  Request ID search condition
+  `request_id OR client_request_id OR upstream_request_id`; no obvious
+  full-table scan was observed.
 - Production `seed_audio_idempotencies.error_diagnostics` exists as nullable
   `TEXT`.
 - Production `seed_audio_idempotencies.x_tt_logid` exists and was populated for
@@ -40,6 +54,13 @@ production closeout:
   the cached response without duplicate billing, and sanitized diagnostics/log
   scans did not show raw base64, raw prompt, raw upstream body, or temporary URL
   value leakage.
+- Seed Audio error usage log production smoke passed for the API-key-verifiable
+  path: synthetic upstream-dispatched failure returned HTTP `400`
+  `invalid_reference_url`, balance was unchanged, token-facing logs found a
+  zero-quota error log, token-facing diagnostics were redacted, and recent
+  success consume logs were not harmed by error-log sanitization. Henry
+  manually verified admin UI visibility for HTTP status, error code, retryable
+  flag, `client_request_id`, upstream request ID, and unpaid marker.
 - Production `/console/token` manual check passed for page-size `10 -> 20`,
   `20 -> 10`, search-mode page-size changes, no flicker/request storm, and no
   HTTP `429`.

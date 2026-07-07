@@ -203,6 +203,28 @@ Wrong: a failed Seed Audio upstream attempt should be retried with the same
 Correct: failed idempotency records remain tied to the original
 `client_request_id`; a new upstream attempt needs a fresh client request ID.
 
+Wrong: Seed Audio usage error diagnostics are safe to expose through self or
+token-facing usage-log APIs because the error log has zero cost.
+
+Correct: Seed Audio error diagnostics are admin-only. Backend sanitization must
+remove `client_request_id`, `upstream_request_id`, `error_code`, `http_status`,
+`retryable`, and `other.seed_audio_error` from self and token-facing log
+responses.
+
+Wrong: zero-cost Seed Audio `LogTypeError` rows can be counted in usage
+statistics because they are usage logs.
+
+Correct: usage stats must count consume logs only. Seed Audio error logs are
+diagnostics, have zero quota/cost/amount semantics, and must not affect balance
+or consume quota totals.
+
+Wrong: every new structured diagnostics field on the large `logs` table needs a
+standalone index immediately.
+
+Correct: keep the core `client_request_id, created_at` index and any index tied
+to a real search entry, such as upstream request ID search. Add standalone
+diagnostic-field indexes only after there is a measured query need.
+
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.

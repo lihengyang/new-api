@@ -39,6 +39,25 @@ sanitized operational evidence that must not be copied into customer docs.
 - Internal smoke used the Henry/LSF `henrytest` testing account/model entry,
   not a customer token, customer alias, customer group, or customer balance.
 
+## Seed Audio Error Usage Logs
+
+- Record: `2026-07-07-seed-audio-error-usage-log-production.md`
+- Final status:
+  `PRODUCTION_DEPLOY_PASSED / POST_DEPLOY_SMOKE_PARTIAL_API_PASS / ADMIN_UI_MANUAL_PASS`
+- Production image:
+  `new-api:seed-audio-error-logs-prod-candidate-6107eb4d`
+- Source / OCI revision:
+  `6107eb4db3b4cce2291c78c69db4aa12b8422163`
+- Scope: admin-observable zero-cost Seed Audio error usage logs for
+  upstream-dispatched `/v1/audio/speech` failures.
+- Logs schema adds structured request/error diagnostics fields and keeps
+  `idx_logs_client_request_id_created_at(client_request_id, created_at)` plus
+  `idx_logs_upstream_request_id(upstream_request_id)`. It intentionally does
+  not add standalone `error_code` or `http_status` indexes.
+- User/self/token-facing usage logs are backend-sanitized and must not expose
+  Seed Audio error diagnostics.
+- Error logs do not affect balance or consume quota statistics.
+
 ## Documentation Guardrails
 
 - Do not publish customer files with `_FIXED`, `_DRAFT`, `_REJECTED`, or wrong

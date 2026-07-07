@@ -2,27 +2,32 @@
 
 Product: Light Speed Future Seedance 2.0 API proxy based on customized new-api nightly.
 
-Current production release status as of the 2026-07-04 Seed Audio parser
-hotfix production closeout:
+Current production release status as of the 2026-07-07 Seed Audio error usage
+log production closeout:
 
-- Status: `PRODUCTION_DEPLOY_PASSED / SEED_AUDIO_PARSER_HOTFIX_RC1`
+- Status:
+  `PRODUCTION_DEPLOY_PASSED / SEED_AUDIO_ERROR_USAGE_LOGS / ADMIN_UI_MANUAL_PASS`
 - Production container: `new-api-nightly`
 - Current production image:
-  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
-- Current production image ID prefix: `dda5be8c7020`
+  `new-api:seed-audio-error-logs-prod-candidate-6107eb4d`
+- Current production image ID:
+  `sha256:65718430ecddd230d5905ad803cc8e023a9335128eb5ac58c6d560c186cffe98`
 - Current code / OCI revision:
-  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
+  `6107eb4db3b4cce2291c78c69db4aa12b8422163`
 - Previous production image:
-  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
+  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
 - Previous production revision:
-  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
+  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
 - Preserved rollback container:
-  `new-api-nightly-before-seed-audio-parser-hotfix-rc1-20260704T173731Z`
+  `new-api-nightly-before-seed-audio-error-logs-6107eb4d-20260707T164119Z`
+- Rollback image:
+  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
 
-The Seed Audio parser hotfix production deployment used the preflight-validated
-artifact built from the recorded source revision. The
+The Seed Audio error usage log production deployment used the
+preflight-validated artifact built from the recorded source revision. The
 rollback artifact must remain available through the observation window unless
-Henry explicitly retires it.
+Henry explicitly retires it. Code rollback will not automatically remove logs
+columns or indexes created by AutoMigrate.
 
 Production domain:
 
@@ -41,7 +46,8 @@ Supported P1 customer endpoint:
 
 Seed Audio P0 customer release status:
 
-- Status: `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED / PARSER_HOTFIX_DEPLOYED`
+- Status:
+  `PRODUCTION_RELEASED / CUSTOMER_DOC_READY / TEXT_AUDIO_IMAGE_VALIDATED / PARSER_HOTFIX_DEPLOYED / ERROR_USAGE_LOGS_DEPLOYED`
 - Customer audio endpoint: `POST /v1/audio/speech`
 - Customer-facing modes: `text_only`, `audio_url`, `image_url`
 - Retry safety: `metadata.client_request_id`
@@ -69,6 +75,15 @@ Seed Audio P0 customer release status:
   `henrytest` testing alias `lsf-seed-audio-1.0-henrytest`; complex SFX
   generation passed, replay did not duplicate billing, and raw data leakage was
   not observed.
+- Error usage log closeout: upstream-dispatched Seed Audio failures on
+  `POST /v1/audio/speech` now write zero-cost `LogTypeError` usage logs.
+  Admin usage logs can show redacted diagnostics including gateway request ID,
+  `client_request_id`, upstream request ID, HTTP status, error code, retryable
+  flag, and unpaid marker. User-facing and token-facing usage logs are
+  backend-sanitized and must not expose Seed Audio diagnostics. Error logs do
+  not affect balance or consume quota statistics. Request ID search supports
+  exact matching across gateway request ID, `client_request_id`, and upstream
+  request ID.
 
 `metadata.client_request_id` is optional and supported for `POST /v1/videos`.
 
