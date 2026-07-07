@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,26 +18,31 @@ import (
 )
 
 type Log struct {
-	Id               int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
-	UserId           int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
-	Type             int    `json:"type" gorm:"index:idx_created_at_type"`
-	Content          string `json:"content"`
-	Username         string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
-	TokenName        string `json:"token_name" gorm:"index;default:''"`
-	ModelName        string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
-	Quota            int    `json:"quota" gorm:"default:0"`
-	PromptTokens     int    `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens int    `json:"completion_tokens" gorm:"default:0"`
-	UseTime          int    `json:"use_time" gorm:"default:0"`
-	IsStream         bool   `json:"is_stream"`
-	ChannelId        int    `json:"channel" gorm:"index"`
-	ChannelName      string `json:"channel_name" gorm:"->"`
-	TokenId          int    `json:"token_id" gorm:"default:0;index"`
-	Group            string `json:"group" gorm:"index"`
-	Ip               string `json:"ip" gorm:"index;default:''"`
-	RequestId        string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
-	Other            string `json:"other"`
+	Id                int     `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
+	UserId            int     `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	CreatedAt         int64   `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type;index:idx_logs_client_request_id_created_at,priority:2"`
+	Type              int     `json:"type" gorm:"index:idx_created_at_type"`
+	Content           string  `json:"content"`
+	Username          string  `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	TokenName         string  `json:"token_name" gorm:"index;default:''"`
+	ModelName         string  `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota             int     `json:"quota" gorm:"default:0"`
+	PromptTokens      int     `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens  int     `json:"completion_tokens" gorm:"default:0"`
+	UseTime           int     `json:"use_time" gorm:"default:0"`
+	IsStream          bool    `json:"is_stream"`
+	ChannelId         int     `json:"channel" gorm:"index"`
+	ChannelName       string  `json:"channel_name" gorm:"->"`
+	TokenId           int     `json:"token_id" gorm:"default:0;index"`
+	Group             string  `json:"group" gorm:"index"`
+	Ip                string  `json:"ip" gorm:"index;default:''"`
+	RequestId         string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
+	ClientRequestID   *string `json:"client_request_id,omitempty" gorm:"column:client_request_id;type:varchar(191);index:idx_logs_client_request_id_created_at,priority:1"`
+	UpstreamRequestID *string `json:"upstream_request_id,omitempty" gorm:"column:upstream_request_id;type:varchar(191);index:idx_logs_upstream_request_id"`
+	ErrorCode         *string `json:"error_code,omitempty" gorm:"column:error_code;type:varchar(128)"`
+	HttpStatus        *int    `json:"http_status,omitempty" gorm:"column:http_status"`
+	Retryable         *bool   `json:"retryable,omitempty" gorm:"column:retryable"`
+	Other             string  `json:"other"`
 }
 
 // don't use iota, avoid change log type value
@@ -50,6 +56,8 @@ const (
 	LogTypeRefund  = 6
 )
 
+const seedAudioLogModelPrefix = "lsf-seed-audio-1.0"
+
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
@@ -61,9 +69,39 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
 		}
+		if shouldSanitizeSeedAudioErrorDiagnostics(logs[i], otherMap) {
+			sanitizeSeedAudioErrorDiagnostics(logs[i])
+			otherMap = map[string]interface{}{}
+		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 		logs[i].Id = startIdx + i + 1
 	}
+}
+
+func shouldSanitizeSeedAudioErrorDiagnostics(log *Log, otherMap map[string]interface{}) bool {
+	if log == nil || log.Type != LogTypeError {
+		return false
+	}
+	if otherMap != nil && otherMap["seed_audio_error"] == true {
+		return true
+	}
+	return strings.HasPrefix(log.ModelName, seedAudioLogModelPrefix) &&
+		(log.ClientRequestID != nil ||
+			log.UpstreamRequestID != nil ||
+			log.ErrorCode != nil ||
+			log.HttpStatus != nil ||
+			log.Retryable != nil)
+}
+
+func sanitizeSeedAudioErrorDiagnostics(log *Log) {
+	if log == nil {
+		return
+	}
+	log.ClientRequestID = nil
+	log.UpstreamRequestID = nil
+	log.ErrorCode = nil
+	log.HttpStatus = nil
+	log.Retryable = nil
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
@@ -142,12 +180,24 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 	}
 }
 
+type ErrorLogStructuredFields struct {
+	ClientRequestID   string
+	UpstreamRequestID string
+	ErrorCode         string
+	HTTPStatus        int
+	Retryable         *bool
+}
+
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
-	isStream bool, group string, other map[string]interface{}) {
+	isStream bool, group string, other map[string]interface{}, structuredFields ...ErrorLogStructuredFields) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, content))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	otherStr := common.MapToJsonStr(other)
+	var structured ErrorLogStructuredFields
+	if len(structuredFields) > 0 {
+		structured = structuredFields[0]
+	}
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -177,8 +227,13 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 			}
 			return ""
 		}(),
-		RequestId: requestId,
-		Other:     otherStr,
+		RequestId:         requestId,
+		ClientRequestID:   stringPtrIfNotEmpty(structured.ClientRequestID),
+		UpstreamRequestID: stringPtrIfNotEmpty(structured.UpstreamRequestID),
+		ErrorCode:         stringPtrIfNotEmpty(structured.ErrorCode),
+		HttpStatus:        intPtrIfPositive(structured.HTTPStatus),
+		Retryable:         structured.Retryable,
+		Other:             otherStr,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
@@ -313,7 +368,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = tx.Where("logs.token_name = ?", tokenName)
 	}
 	if requestId != "" {
-		tx = tx.Where("logs.request_id = ?", requestId)
+		tx = applyLogRequestIDFilter(tx, requestId)
 	}
 	if startTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", startTimestamp)
@@ -400,7 +455,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		tx = tx.Where("logs.token_name = ?", tokenName)
 	}
 	if requestId != "" {
-		tx = tx.Where("logs.request_id = ?", requestId)
+		tx = applyLogRequestIDFilter(tx, requestId)
 	}
 	if startTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", startTimestamp)
@@ -424,6 +479,29 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
+}
+
+func applyLogRequestIDFilter(tx *gorm.DB, requestId string) *gorm.DB {
+	requestId = strings.TrimSpace(requestId)
+	if requestId == "" {
+		return tx
+	}
+	return tx.Where("(logs.request_id = ? OR logs.client_request_id = ? OR logs.upstream_request_id = ?)", requestId, requestId, requestId)
+}
+
+func stringPtrIfNotEmpty(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func intPtrIfPositive(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
 }
 
 type Stat struct {

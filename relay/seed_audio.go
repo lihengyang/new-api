@@ -178,20 +178,7 @@ func SeedAudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	var upstreamDispatched bool
 	var upstreamDiagnostics *dto.SeedAudioUpstreamDiagnostics
 	defer func() {
-		if newAPIError == nil {
-			return
-		}
-		if info.Billing != nil && !settled {
-			info.Billing.Refund(c)
-		}
-		if idempotency == nil {
-			return
-		}
-		if upstreamDispatched {
-			_ = idempotency.storeFailure(c, newAPIError, upstreamDiagnostics)
-			return
-		}
-		_ = idempotency.abandon(c)
+		seedAudioHandleFailureCleanup(c, info, normalized, idempotency, newAPIError, upstreamDiagnostics, upstreamDispatched, settled)
 	}()
 
 	if newAPIError = service.PreConsumeBilling(c, prechargeQuota, info); newAPIError != nil {
@@ -266,6 +253,29 @@ func SeedAudioHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		result.Duration, result.OriginalDuration, actualQuota, seedAudioMaskLogID(result.XTTLogID)))
 	c.JSON(http.StatusOK, response)
 	return nil
+}
+
+func seedAudioHandleFailureCleanup(c *gin.Context, info *relaycommon.RelayInfo, normalized *seedAudioNormalizedRequest, idempotency *seedAudioIdempotencyContext, apiErr *types.NewAPIError, diagnostics *dto.SeedAudioUpstreamDiagnostics, upstreamDispatched bool, settled bool) {
+	if apiErr == nil {
+		return
+	}
+	if info != nil && info.Billing != nil && !settled {
+		info.Billing.Refund(c)
+	}
+	if upstreamDispatched {
+		if idempotency != nil {
+			if err := idempotency.storeFailure(c, apiErr, diagnostics); err != nil {
+				logger.LogError(c, "failed to store Seed Audio idempotency failure: "+err.Error())
+			}
+		}
+		if !settled {
+			seedAudioRecordFailureLog(c, info, normalized, apiErr, diagnostics)
+		}
+		return
+	}
+	if idempotency != nil {
+		_ = idempotency.abandon(c)
+	}
 }
 
 func seedAudioRequestBody(c *gin.Context) ([]byte, *types.NewAPIError) {
@@ -1356,6 +1366,193 @@ func seedAudioRecordConsumeLog(c *gin.Context, info *relaycommon.RelayInfo, norm
 		Group:          info.UsingGroup,
 		Other:          other,
 	})
+}
+
+func seedAudioRecordFailureLog(c *gin.Context, info *relaycommon.RelayInfo, normalized *seedAudioNormalizedRequest, apiErr *types.NewAPIError, diagnostics *dto.SeedAudioUpstreamDiagnostics) {
+	if c == nil || info == nil || normalized == nil || apiErr == nil {
+		return
+	}
+	startTime := info.StartTime
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	elapsedSeconds := time.Since(startTime).Seconds()
+	if elapsedSeconds < 0 {
+		elapsedSeconds = 0
+	}
+	useTimeSeconds := int(elapsedSeconds)
+	requestPath := ""
+	if c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+
+	errorCode := seedAudioErrorCode(apiErr)
+	httpStatus := seedAudioFailureHTTPStatus(apiErr, diagnostics)
+	retryable := seedAudioFailureRetryable(apiErr, diagnostics)
+	upstreamRequestID := seedAudioUpstreamRequestID(diagnostics)
+	requestID := c.GetString(common.RequestIdKey)
+
+	other := map[string]interface{}{
+		"request_path":        requestPath,
+		"seed_audio":          true,
+		"seed_audio_error":    true,
+		"model_alias":         info.OriginModelName,
+		"failure_stage":       seedAudioFailureStage(apiErr, diagnostics),
+		"elapsed_seconds":     math.Round(elapsedSeconds*1000) / 1000,
+		"input_chars":         utf8.RuneCountInString(normalized.TextPrompt),
+		"http_status":         httpStatus,
+		"error_code":          errorCode,
+		"retryable":           retryable,
+		"client_request_id":   normalized.ClientRequestID,
+		"request_id":          requestID,
+		"upstream_request_id": upstreamRequestID,
+		"charged":             false,
+		"actual_quota":        0,
+		"pre_consumed_quota":  0,
+		"amount":              0,
+	}
+	seedAudioAttachFailureDiagnostics(other, diagnostics)
+
+	model.RecordErrorLog(c, info.UserId, info.ChannelId, info.OriginModelName, c.GetString("token_name"),
+		"Seed Audio request failed", info.TokenId, useTimeSeconds, false, info.UsingGroup, other,
+		model.ErrorLogStructuredFields{
+			ClientRequestID:   normalized.ClientRequestID,
+			UpstreamRequestID: upstreamRequestID,
+			ErrorCode:         errorCode,
+			HTTPStatus:        httpStatus,
+			Retryable:         &retryable,
+		})
+}
+
+func seedAudioAttachFailureDiagnostics(other map[string]interface{}, diagnostics *dto.SeedAudioUpstreamDiagnostics) {
+	if other == nil || diagnostics == nil {
+		return
+	}
+	if diagnostics.UpstreamHTTPStatus != 0 {
+		other["upstream_http_status"] = diagnostics.UpstreamHTTPStatus
+	}
+	if diagnostics.XTTLogID != "" {
+		other["x_tt_logid"] = diagnostics.XTTLogID
+	}
+	if diagnostics.XTTTraceID != "" {
+		other["x_tt_trace_id"] = diagnostics.XTTTraceID
+	}
+	if diagnostics.RequestID != "" {
+		other["upstream_request_id_header"] = diagnostics.RequestID
+	}
+	if diagnostics.XRequestID != "" {
+		other["x_request_id"] = diagnostics.XRequestID
+	}
+	if diagnostics.ResponseMetadataRequestID != "" {
+		other["response_metadata_request_id"] = diagnostics.ResponseMetadataRequestID
+	}
+	if diagnostics.LatencyMS != 0 {
+		other["upstream_latency_ms"] = diagnostics.LatencyMS
+	}
+	if diagnostics.BodySizeBucket != "" {
+		other["body_size_bucket"] = diagnostics.BodySizeBucket
+	}
+	if diagnostics.ResponseClass != "" {
+		other["response_class"] = diagnostics.ResponseClass
+	}
+	if diagnostics.ContentTypeClass != "" {
+		other["content_type_class"] = diagnostics.ContentTypeClass
+	}
+	if diagnostics.ErrorClass != "" {
+		other["error_class"] = diagnostics.ErrorClass
+	}
+	if diagnostics.InvalidJSON {
+		other["invalid_json"] = true
+	}
+	if diagnostics.HTML {
+		other["html"] = true
+	}
+	if diagnostics.CloudflareLike {
+		other["cloudflare_like"] = true
+	}
+	if diagnostics.ReferenceFetchLike {
+		other["reference_fetch_like"] = true
+	}
+}
+
+func seedAudioErrorCode(apiErr *types.NewAPIError) string {
+	if apiErr == nil {
+		return ""
+	}
+	if code := apiErr.ToOpenAIError().Code; code != nil {
+		return fmt.Sprintf("%v", code)
+	}
+	return string(apiErr.GetErrorCode())
+}
+
+func seedAudioFailureHTTPStatus(apiErr *types.NewAPIError, diagnostics *dto.SeedAudioUpstreamDiagnostics) int {
+	if diagnostics != nil && diagnostics.UpstreamHTTPStatus != 0 {
+		return diagnostics.UpstreamHTTPStatus
+	}
+	if apiErr != nil {
+		return apiErr.StatusCode
+	}
+	return 0
+}
+
+func seedAudioFailureRetryable(apiErr *types.NewAPIError, diagnostics *dto.SeedAudioUpstreamDiagnostics) bool {
+	if diagnostics != nil && diagnostics.ErrorClass == "invalid_reference_url" {
+		return false
+	}
+	if apiErr == nil {
+		return false
+	}
+	code := seedAudioErrorCode(apiErr)
+	if code == "invalid_reference_url" {
+		return false
+	}
+	if code == "seed_audio_upstream_timeout" || code == "seed_audio_upstream_error" || code == "seed_audio_upstream_schema_error" {
+		return true
+	}
+	return apiErr.StatusCode == http.StatusRequestTimeout ||
+		apiErr.StatusCode == http.StatusTooManyRequests ||
+		apiErr.StatusCode >= http.StatusInternalServerError
+}
+
+func seedAudioFailureStage(apiErr *types.NewAPIError, diagnostics *dto.SeedAudioUpstreamDiagnostics) string {
+	if apiErr != nil && seedAudioErrorCode(apiErr) == "seed_audio_upstream_timeout" {
+		return "timeout"
+	}
+	if diagnostics != nil {
+		switch diagnostics.ErrorClass {
+		case "timeout":
+			return "timeout"
+		case "invalid_json", "upstream_schema_error", "duration_exceeds_reserved", "read_error":
+			return "parse_response"
+		case "network_error", "invalid_reference_url":
+			return "upstream_call"
+		}
+		if diagnostics.UpstreamHTTPStatus != 0 {
+			return "upstream_call"
+		}
+	}
+	if apiErr != nil && seedAudioErrorCode(apiErr) == "seed_audio_upstream_schema_error" {
+		return "parse_response"
+	}
+	return "adapter_error"
+}
+
+func seedAudioUpstreamRequestID(diagnostics *dto.SeedAudioUpstreamDiagnostics) string {
+	if diagnostics == nil {
+		return ""
+	}
+	for _, candidate := range []string{
+		diagnostics.XTTLogID,
+		diagnostics.ResponseMetadataRequestID,
+		diagnostics.RequestID,
+		diagnostics.XRequestID,
+		diagnostics.XTTTraceID,
+	} {
+		if value := strings.TrimSpace(candidate); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func seedAudioUpdateChannelUsedQuota(c *gin.Context, channelID int, quota int) {

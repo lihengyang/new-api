@@ -96,7 +96,7 @@ const LogsFilters = ({
           <Form.Input
             field='request_id'
             prefix={<IconSearch />}
-            placeholder={t('Request ID')}
+            placeholder={t('Request ID / Client Request ID')}
             showClear
             pure
             size='small'

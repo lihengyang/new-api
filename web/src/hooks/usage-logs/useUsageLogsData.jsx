@@ -408,6 +408,41 @@ export const useLogsData = () => {
     return <div style={{ whiteSpace: 'pre-line' }}>{lines.join('\n')}</div>;
   };
 
+  const seedAudioValueOrFallback = (value, fallback = '-') => {
+    if (value === undefined || value === null || value === '') {
+      return fallback;
+    }
+    return String(value);
+  };
+
+  const renderSeedAudioFailureLogContent = (log, other) => {
+    const httpStatus = other?.http_status ?? log?.http_status;
+    const errorCode = other?.error_code ?? log?.error_code;
+    const retryable = other?.retryable ?? log?.retryable;
+    const clientRequestID = other?.client_request_id ?? log?.client_request_id;
+    const requestID = other?.request_id ?? log?.request_id;
+    const upstreamRequestID =
+      other?.upstream_request_id ??
+      other?.x_tt_logid ??
+      log?.upstream_request_id;
+    const lines = [
+      t('Seed Audio 请求失败'),
+      `HTTP: ${seedAudioValueOrFallback(httpStatus)}`,
+      `error_code: ${seedAudioValueOrFallback(errorCode)}`,
+      `retryable: ${
+        retryable === undefined || retryable === null ? '-' : String(retryable)
+      }`,
+      `client_request_id: ${seedAudioValueOrFallback(clientRequestID)}`,
+      `trace_id/request_id: ${seedAudioValueOrFallback(requestID)}`,
+      `upstream_request_id/x-tt-logid: ${seedAudioValueOrFallback(
+        upstreamRequestID,
+        t('未获取'),
+      )}`,
+      t('未扣费'),
+    ];
+    return <div style={{ whiteSpace: 'pre-line' }}>{lines.join('\n')}</div>;
+  };
+
   // Format logs data
   const setLogsFormat = (logs) => {
     const requestConversionDisplayValue = (conversionChain) => {
@@ -427,6 +462,8 @@ export const useLogsData = () => {
       let other = getLogOther(logs[i].other);
       const isSeedAudioUsageLog =
         logs[i].type === 2 && other?.seed_audio === true;
+      const isSeedAudioErrorLog =
+        isAdminUser && logs[i].type === 5 && other?.seed_audio_error === true;
       let expandDataLocal = [];
 
       if (
@@ -442,6 +479,18 @@ export const useLogsData = () => {
         expandDataLocal.push({
           key: t('Request ID'),
           value: logs[i].request_id,
+        });
+      }
+      if (isAdminUser && logs[i].client_request_id) {
+        expandDataLocal.push({
+          key: t('Client Request ID'),
+          value: logs[i].client_request_id,
+        });
+      }
+      if (isAdminUser && logs[i].upstream_request_id) {
+        expandDataLocal.push({
+          key: t('Upstream Request ID'),
+          value: logs[i].upstream_request_id,
         });
       }
       if (other?.ws || other?.audio) {
@@ -634,6 +683,12 @@ export const useLogsData = () => {
             value: other.reasoning_effort,
           });
         }
+      }
+      if (isSeedAudioErrorLog) {
+        expandDataLocal.push({
+          key: t('错误详情'),
+          value: renderSeedAudioFailureLogContent(logs[i], other),
+        });
       }
       if (logs[i].type === 6) {
         if (other?.task_id) {

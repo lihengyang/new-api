@@ -609,6 +609,7 @@ func TestSeedAudioTooLongRequestStopsBeforeIdempotencyBillingAndUpstream(t *test
 
 func TestSeedAudioUpstreamFailureRefundsAndStoresDiagnostics(t *testing.T) {
 	setupRelayTaskTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Log{}))
 	var upstreamCalls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&upstreamCalls, 1)
@@ -625,6 +626,8 @@ func TestSeedAudioUpstreamFailureRefundsAndStoresDiagnostics(t *testing.T) {
 		"metadata":{"client_request_id":"req_refund_failure"}
 	}`
 	c, info, _ := newSeedAudioHelperTestContext(t, body, upstream.URL)
+	c.Set("username", "relay-task-test-user")
+	c.Set(common.RequestIdKey, "trace_seed_audio_failure")
 
 	apiErr := SeedAudioHelper(c, info)
 
@@ -662,10 +665,92 @@ func TestSeedAudioUpstreamFailureRefundsAndStoresDiagnostics(t *testing.T) {
 	require.NotContains(t, row.ErrorDiagnostics, "temporary service failure")
 	require.NotContains(t, row.ErrorDiagnostics, "hello")
 	require.NotContains(t, row.ErrorDiagnostics, "https://")
+
+	var failureLog model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeError).First(&failureLog).Error)
+	require.Equal(t, "Seed Audio request failed", failureLog.Content)
+	require.Equal(t, "lsf-seed-audio-1.0-tenant-a", failureLog.ModelName)
+	require.Equal(t, 0, failureLog.Quota)
+	require.Equal(t, 0, failureLog.PromptTokens)
+	require.Equal(t, 0, failureLog.CompletionTokens)
+	require.Equal(t, "trace_seed_audio_failure", failureLog.RequestId)
+	require.NotNil(t, failureLog.ClientRequestID)
+	require.Equal(t, "req_refund_failure", *failureLog.ClientRequestID)
+	require.NotNil(t, failureLog.UpstreamRequestID)
+	require.Equal(t, "log-refund-test", *failureLog.UpstreamRequestID)
+	require.NotNil(t, failureLog.ErrorCode)
+	require.Equal(t, "seed_audio_upstream_error", *failureLog.ErrorCode)
+	require.NotNil(t, failureLog.HttpStatus)
+	require.Equal(t, http.StatusInternalServerError, *failureLog.HttpStatus)
+	require.NotNil(t, failureLog.Retryable)
+	require.True(t, *failureLog.Retryable)
+
+	other, err := common.StrToMap(failureLog.Other)
+	require.NoError(t, err)
+	require.Equal(t, true, other["seed_audio_error"])
+	require.Equal(t, "upstream_call", other["failure_stage"])
+	require.EqualValues(t, 5, other["input_chars"])
+	require.EqualValues(t, 0, other["actual_quota"])
+	require.Equal(t, false, other["charged"])
+	require.Equal(t, "req_refund_failure", other["client_request_id"])
+	require.Equal(t, "trace_seed_audio_failure", other["request_id"])
+	require.Equal(t, "log-refund-test", other["upstream_request_id"])
+	require.Equal(t, "log-refund-test", other["x_tt_logid"])
+	require.Equal(t, "req-refund-test", other["response_metadata_request_id"])
+
+	adminLogs, total, err := model.GetAllLogs(model.LogTypeError, 0, 0, "", "relay-task-test-user", "relay-task-test-token", 0, 10, 0, "", "req_refund_failure")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, adminLogs, 1)
+	require.Equal(t, failureLog.Id, adminLogs[0].Id)
+
+	combinedFailureLog := failureLog.Content + failureLog.Other
+	require.NotContains(t, combinedFailureLog, "hello")
+	require.NotContains(t, combinedFailureLog, "temporary service failure")
+}
+
+func TestSeedAudioSettledLocalErrorDoesNotRecordZeroCostFailureLog(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Log{}))
+
+	c := newSeedAudioIdempotencyTestContext()
+	c.Set("username", "relay-task-test-user")
+	c.Set("token_name", "relay-task-test-token")
+	c.Set(common.RequestIdKey, "trace_seed_audio_settled_local_error")
+	info := &relaycommon.RelayInfo{
+		UserId:          1001,
+		TokenId:         501,
+		OriginModelName: "lsf-seed-audio-1.0-tenant-a",
+		UsingGroup:      "test-group",
+		StartTime:       time.Now().Add(-2 * time.Second),
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 77},
+	}
+	normalized := &seedAudioNormalizedRequest{
+		TextPrompt:      "settled local failure",
+		Format:          seedAudioDefaultFormat,
+		ReferenceMode:   "text_only",
+		ClientRequestID: "req_settled_local_error",
+	}
+	diagnostics := &dto.SeedAudioUpstreamDiagnostics{
+		UpstreamHTTPStatus: http.StatusOK,
+		XTTLogID:           "log-settled-local-error",
+		ResponseClass:      "2xx",
+		ContentTypeClass:   "json",
+	}
+	apiErr := seedAudioError(http.StatusServiceUnavailable, "upstream_error", "seed_audio_idempotency_unavailable", "Seed Audio idempotency store is unavailable", "metadata.client_request_id")
+
+	seedAudioHandleFailureCleanup(c, info, normalized, nil, apiErr, diagnostics, true, true)
+
+	var errorLogCount int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).
+		Where("type = ? AND model_name = ?", model.LogTypeError, "lsf-seed-audio-1.0-tenant-a").
+		Count(&errorLogCount).Error)
+	require.Zero(t, errorLogCount)
 }
 
 func TestSeedAudioHelperStoresXTTLogIDOnCompletedIdempotency(t *testing.T) {
 	setupRelayTaskTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Log{}))
 	var upstreamCalls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&upstreamCalls, 1)
@@ -696,6 +781,10 @@ func TestSeedAudioHelperStoresXTTLogIDOnCompletedIdempotency(t *testing.T) {
 	require.Equal(t, "20260704162718764DD51B931CCBBB3CEF", row.XTTLogID)
 	require.Equal(t, "https://tmp.example.com/generated.mp3", row.TemporaryURL)
 	require.NotContains(t, row.ErrorDiagnostics, "base64-audio-not-persisted")
+
+	var errorLogCount int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&errorLogCount).Error)
+	require.Zero(t, errorLogCount)
 }
 
 func TestSeedAudioQuotaMathUsesOriginalDurationAndGroupRatio(t *testing.T) {

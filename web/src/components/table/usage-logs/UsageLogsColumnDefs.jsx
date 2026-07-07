@@ -417,6 +417,28 @@ function getSeedAudioUsageLogDetailSummary(record, other, t) {
   };
 }
 
+function getSeedAudioErrorLogDetailSummary(record, other, t) {
+  const httpStatus = other?.http_status ?? record?.http_status ?? '-';
+  const errorCode = other?.error_code ?? record?.error_code ?? '-';
+  const retryable = other?.retryable ?? record?.retryable;
+  return {
+    segments: [
+      { text: t('Seed Audio 请求失败'), tone: 'primary' },
+      { text: `HTTP: ${httpStatus}`, tone: 'secondary' },
+      { text: `error_code: ${errorCode}`, tone: 'secondary' },
+      {
+        text: `retryable: ${
+          retryable === undefined || retryable === null
+            ? '-'
+            : String(retryable)
+        }`,
+        tone: 'secondary',
+      },
+      { text: t('未扣费'), tone: 'secondary' },
+    ],
+  };
+}
+
 function renderCompactDetailSummary(summarySegments) {
   const segments = Array.isArray(summarySegments)
     ? summarySegments.filter((segment) => segment?.text)
@@ -454,13 +476,23 @@ function renderCompactDetailSummary(summarySegments) {
   );
 }
 
-function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
+function getUsageLogDetailSummary(
+  record,
+  text,
+  billingDisplayMode,
+  t,
+  isAdminUser,
+) {
   const other = getLogOther(record.other);
 
   if (record.type === 6) {
     return {
       segments: [{ text: t('异步任务退款'), tone: 'primary' }],
     };
+  }
+
+  if (isAdminUser && other?.seed_audio_error === true && record.type === 5) {
+    return getSeedAudioErrorLogDetailSummary(record, other, t);
   }
 
   if (other == null || record.type !== 2) {
@@ -976,6 +1008,7 @@ export const getLogsColumns = ({
           text,
           billingDisplayMode,
           t,
+          isAdminUser,
         );
 
         if (!detailSummary) {
