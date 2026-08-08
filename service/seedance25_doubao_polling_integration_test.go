@@ -29,6 +29,7 @@ import (
 const (
 	seedance25IntegrationBalance     = 10_000
 	seedance25IntegrationRuleVersion = "byteplus_seedance_2_5_intl_2026_08_p0"
+	seedance25TenantAliasForPolling  = relaycommon.Seedance25TenantAliasPrefix + "henrytest"
 )
 
 var seedance25IntegrationSequence atomic.Int64
@@ -57,7 +58,7 @@ func seedance25IntegrationBillingContext(hasVideo bool) *model.TaskBillingContex
 		ModelRatio:            5.35,
 		GroupRatio:            1,
 		OtherRatios:           map[string]float64{"seedance_intl_billing": otherRatio},
-		OriginModelName:       relaycommon.Seedance25PublicAlias,
+		OriginModelName:       seedance25TenantAliasForPolling,
 		BillingFamily:         relaycommon.Seedance25BillingFamily,
 		BillingRuleVersion:    seedance25IntegrationRuleVersion,
 		OtherRatioNumerator:   numerator,
@@ -116,7 +117,7 @@ func seedSeedance25PollingIntegrationFixture(t *testing.T, baseURL string, reser
 		CreatedAt:  now,
 		UpdatedAt:  now,
 		Properties: model.Properties{
-			OriginModelName:   relaycommon.Seedance25PublicAlias,
+			OriginModelName:   seedance25TenantAliasForPolling,
 			UpstreamModelName: "placeholder-upstream-model",
 		},
 		PrivateData: model.TaskPrivateData{
@@ -236,7 +237,7 @@ func TestSeedance25RealDoubaoPollingSuccessSettlesAndAuditsExactlyOnce(t *testin
 			require.Len(t, logs, 1)
 			require.Equal(t, tt.expectedLogType, logs[0].Type)
 			require.Equal(t, tt.expectedLogQuota, logs[0].Quota)
-			require.Equal(t, relaycommon.Seedance25PublicAlias, logs[0].ModelName)
+			require.Equal(t, seedance25TenantAliasForPolling, logs[0].ModelName)
 			var other map[string]any
 			require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
 			require.EqualValues(t, 535, other["actual_quota"])
@@ -246,7 +247,7 @@ func TestSeedance25RealDoubaoPollingSuccessSettlesAndAuditsExactlyOnce(t *testin
 			var video dto.OpenAIVideo
 			require.NoError(t, common.Unmarshal(publicBody, &video))
 			require.Equal(t, dto.VideoStatusCompleted, video.Status)
-			require.Equal(t, relaycommon.Seedance25PublicAlias, video.Model)
+			require.Equal(t, seedance25TenantAliasForPolling, video.Model)
 			require.Equal(t, "https://example.invalid/seedance25-result.mp4", video.Metadata["url"])
 			require.NotNil(t, video.Usage)
 			require.Equal(t, 100, video.Usage.CompletionTokens)
@@ -343,7 +344,7 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 			require.Len(t, logs, 1)
 			require.Equal(t, model.LogTypeRefund, logs[0].Type)
 			require.Equal(t, reservation, logs[0].Quota)
-			require.Equal(t, relaycommon.Seedance25PublicAlias, logs[0].ModelName)
+			require.Equal(t, seedance25TenantAliasForPolling, logs[0].ModelName)
 			require.NotContains(t, logs[0].Other+logs[0].Content, "placeholder-upstream")
 			require.NotContains(t, logs[0].Other+logs[0].Content, "raw-upstream-diagnostic-placeholder")
 
@@ -351,7 +352,7 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 			var video dto.OpenAIVideo
 			require.NoError(t, common.Unmarshal(publicBody, &video))
 			require.Equal(t, dto.VideoStatusFailed, video.Status)
-			require.Equal(t, relaycommon.Seedance25PublicAlias, video.Model)
+			require.Equal(t, seedance25TenantAliasForPolling, video.Model)
 			require.Nil(t, video.Usage)
 			if video.Metadata != nil {
 				require.Empty(t, video.Metadata["url"])
@@ -386,7 +387,7 @@ func TestSeedance25RealDoubaoPollingCASLoserDoesNotRepeatFinancialAction(t *test
 		UserId:    fixture.userID,
 		LogType:   model.LogTypeRefund,
 		ChannelId: fixture.channelID,
-		ModelName: relaycommon.Seedance25PublicAlias,
+		ModelName: seedance25TenantAliasForPolling,
 		Quota:     reservation,
 		TokenId:   fixture.tokenID,
 		Group:     "default",

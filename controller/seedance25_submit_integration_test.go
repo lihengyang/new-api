@@ -26,6 +26,7 @@ import (
 const (
 	seedance25SubmitTestBalance      = 20_000_000
 	seedance25MappedModelPlaceholder = "placeholder-upstream-model"
+	seedance25TenantAliasForTest     = relaycommon.Seedance25TenantAliasPrefix + "henrytest"
 )
 
 var seedance25SubmitSequence atomic.Int64
@@ -64,6 +65,12 @@ func setupSeedance25SubmitFixture(t *testing.T, requestBody []byte, upstreamURL,
 	db := model.DB
 	model.LOG_DB = db
 	ratio_setting.InitRatioSettings()
+	previousModelRatios := ratio_setting.ModelRatio2JSONString()
+	runtimeModelRatios := ratio_setting.GetModelRatioCopy()
+	runtimeModelRatios[seedance25TenantAliasForTest] = 5.35
+	runtimeModelRatiosJSON, err := common.Marshal(runtimeModelRatios)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(runtimeModelRatiosJSON)))
 	service.InitHttpClient()
 	if sqlDB, dbErr := db.DB(); dbErr == nil {
 		sqlDB.SetMaxOpenConns(1)
@@ -107,7 +114,7 @@ func setupSeedance25SubmitFixture(t *testing.T, requestBody []byte, upstreamURL,
 		UsingGroup:      "default",
 		TokenId:         id,
 		TokenKey:        token.Key,
-		OriginModelName: relaycommon.Seedance25PublicAlias,
+		OriginModelName: seedance25TenantAliasForTest,
 		UserSetting: dto.UserSetting{
 			BillingPreference: "wallet_only",
 		},
@@ -126,6 +133,7 @@ func setupSeedance25SubmitFixture(t *testing.T, requestBody []byte, upstreamURL,
 		common.LogConsumeEnabled, common.DataExportEnabled = oldLogConsumeEnabled, oldDataExportEnabled
 		common.BatchUpdateEnabled = oldBatchUpdateEnabled
 		common.SQLitePath, common.IsMasterNode = oldSQLitePath, oldIsMasterNode
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousModelRatios))
 	})
 
 	return &seedance25SubmitFixture{
@@ -141,7 +149,7 @@ func setupSeedance25SubmitFixture(t *testing.T, requestBody []byte, upstreamURL,
 func seedance25SubmitRequestBody(t *testing.T, metadata map[string]any) []byte {
 	t.Helper()
 	body, err := common.Marshal(map[string]any{
-		"model":    relaycommon.Seedance25PublicAlias,
+		"model":    seedance25TenantAliasForTest,
 		"prompt":   "safe integration prompt",
 		"metadata": metadata,
 	})
@@ -234,7 +242,7 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			defer server.Close()
 
 			requestBody := seedance25SubmitRequestBody(t, tt.metadata)
-			mapping := `{"seedance-2.5":"  ` + seedance25MappedModelPlaceholder + `  "}`
+			mapping := `{"` + seedance25TenantAliasForTest + `":"  ` + seedance25MappedModelPlaceholder + `  "}`
 			fixture := setupSeedance25SubmitFixture(t, requestBody, server.URL, mapping)
 
 			result, taskErr := relay.RelayTaskSubmit(fixture.context, fixture.info)
@@ -244,7 +252,7 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 
 			payload := decodeSeedance25SubmitPayload(t, upstreamBody)
 			require.Equal(t, seedance25MappedModelPlaceholder, payload["model"])
-			require.NotEqual(t, relaycommon.Seedance25PublicAlias, payload["model"])
+			require.NotEqual(t, seedance25TenantAliasForTest, payload["model"])
 			require.Equal(t, false, payload["generate_audio"])
 			require.Equal(t, tt.expectedRatio, payload["ratio"])
 			require.NotContains(t, payload, "seed")
@@ -271,7 +279,7 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			var task model.Task
 			require.NoError(t, fixture.db.Where("task_id = ?", fixture.info.PublicTaskID).First(&task).Error)
 			require.Equal(t, result.Quota, task.Quota)
-			require.Equal(t, relaycommon.Seedance25PublicAlias, task.Properties.OriginModelName)
+			require.Equal(t, seedance25TenantAliasForTest, task.Properties.OriginModelName)
 			require.NotNil(t, task.PrivateData.BillingContext)
 			require.Equal(t, 5.35, task.PrivateData.BillingContext.ModelRatio)
 			require.Equal(t, 1.0, task.PrivateData.BillingContext.GroupRatio)
@@ -280,12 +288,12 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			require.Equal(t, tt.expectedDenominator, task.PrivateData.BillingContext.OtherRatioDenominator)
 			require.NotContains(t, string(task.Data), seedance25MappedModelPlaceholder)
 			require.NotContains(t, fixture.recorder.Body.String(), seedance25MappedModelPlaceholder)
-			require.Contains(t, fixture.recorder.Body.String(), relaycommon.Seedance25PublicAlias)
+			require.Contains(t, fixture.recorder.Body.String(), seedance25TenantAliasForTest)
 
 			var logs []model.Log
 			require.NoError(t, fixture.db.Where("user_id = ?", fixture.userID).Find(&logs).Error)
 			require.Len(t, logs, 1)
-			require.Equal(t, relaycommon.Seedance25PublicAlias, logs[0].ModelName)
+			require.Equal(t, seedance25TenantAliasForTest, logs[0].ModelName)
 			require.NotContains(t, logs[0].Content, seedance25MappedModelPlaceholder)
 			require.NotContains(t, logs[0].Other, seedance25MappedModelPlaceholder)
 
@@ -306,7 +314,8 @@ func TestSeedance25RealDoubaoSubmitRejectsMissingOrBlankMappingBeforeBilling(t *
 		mapping string
 	}{
 		{name: "missing", mapping: ""},
-		{name: "blank", mapping: `{"seedance-2.5":"   "}`},
+		{name: "bare global key", mapping: `{"seedance-2.5":"placeholder-upstream-model"}`},
+		{name: "blank", mapping: `{"lsf-seedance-2.5-henrytest":"   "}`},
 	}
 
 	for _, tt := range tests {
@@ -346,7 +355,7 @@ func TestSeedance25RealDoubaoSubmitRejectsNonFiniteGroupRatioBeforeBilling(t *te
 	}))
 	defer server.Close()
 	requestBody := seedance25SubmitRequestBody(t, map[string]any{"duration": 4, "resolution": "720p"})
-	mapping := `{"seedance-2.5":"` + seedance25MappedModelPlaceholder + `"}`
+	mapping := `{"` + seedance25TenantAliasForTest + `":"` + seedance25MappedModelPlaceholder + `"}`
 	fixture := setupSeedance25SubmitFixture(t, requestBody, server.URL, mapping)
 
 	result, taskErr := relay.RelayTaskSubmit(fixture.context, fixture.info)

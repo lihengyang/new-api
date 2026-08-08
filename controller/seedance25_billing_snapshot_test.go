@@ -12,7 +12,7 @@ import (
 
 func TestApplyTaskPrivateDataPersistsSeedance25BillingSnapshot(t *testing.T) {
 	info := &relaycommon.RelayInfo{
-		OriginModelName: relaycommon.Seedance25PublicAlias,
+		OriginModelName: seedance25TenantAliasForTest,
 		BillingSource:   "wallet",
 		TokenId:         12,
 		PriceData: types.PriceData{
@@ -34,7 +34,7 @@ func TestApplyTaskPrivateDataPersistsSeedance25BillingSnapshot(t *testing.T) {
 
 	require.Equal(t, "provider_task_marker", privateData.UpstreamTaskID)
 	require.NotNil(t, privateData.BillingContext)
-	require.Equal(t, relaycommon.Seedance25PublicAlias, privateData.BillingContext.OriginModelName)
+	require.Equal(t, seedance25TenantAliasForTest, privateData.BillingContext.OriginModelName)
 	require.Equal(t, relaycommon.Seedance25BillingFamily, privateData.BillingContext.BillingFamily)
 	require.Equal(t, "seedance25_test_rule", privateData.BillingContext.BillingRuleVersion)
 	require.Equal(t, 5.35, privateData.BillingContext.ModelRatio)

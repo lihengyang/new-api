@@ -223,13 +223,16 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 		originModelName = req.Model
 	}
 	if relaycommon.IsSeedance25AliasLookalike(originModelName) || relaycommon.IsSeedance25AliasLookalike(req.Model) {
-		return seedance25InvalidRequest("model must use the exact seedance-2.5 alias")
+		return seedance25InvalidRequest("model must use one exact lsf-seedance-2.5-<tenant> alias")
 	}
 	if relaycommon.IsSeedance25OriginAlias(originModelName) != relaycommon.IsSeedance25OriginAlias(req.Model) {
-		return seedance25InvalidRequest("model must use the exact seedance-2.5 alias consistently")
+		return seedance25InvalidRequest("model must use the exact tenant Seedance 2.5 alias consistently")
 	}
 	if !relaycommon.IsSeedance25OriginAlias(originModelName) {
 		return nil
+	}
+	if originModelName != req.Model {
+		return seedance25InvalidRequest("model must use the exact tenant Seedance 2.5 alias consistently")
 	}
 
 	root, metadata, err := seedance25RawRequest(c)
@@ -237,8 +240,8 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 		return seedance25InvalidRequest(err.Error())
 	}
 	var submittedModel string
-	if err := common.Unmarshal(root["model"], &submittedModel); err != nil || !relaycommon.IsSeedance25OriginAlias(submittedModel) {
-		return seedance25InvalidRequest("model must use the exact seedance-2.5 alias")
+	if err := common.Unmarshal(root["model"], &submittedModel); err != nil || submittedModel != originModelName {
+		return seedance25InvalidRequest("model must use the exact tenant Seedance 2.5 alias")
 	}
 	if unsupported := firstUnsupportedSeedance25Field(root, seedance25AllowedRootFields); unsupported != "" {
 		return seedance25InvalidRequest(fmt.Sprintf("field %q is not supported for seedance-2.5", unsupported))

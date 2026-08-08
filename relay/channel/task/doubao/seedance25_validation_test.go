@@ -15,10 +15,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	seedance25TenantAliasForDoubaoTest       = relaycommon.Seedance25TenantAliasPrefix + "henrytest"
+	seedance25SecondTenantAliasForDoubaoTest = relaycommon.Seedance25TenantAliasPrefix + "tenant-two"
+)
+
 func seedance25RequestBody(t *testing.T, metadata map[string]any) []byte {
+	return seedance25RequestBodyForModel(t, seedance25TenantAliasForDoubaoTest, metadata)
+}
+
+func seedance25RequestBodyForModel(t *testing.T, model string, metadata map[string]any) []byte {
 	t.Helper()
 	body, err := common.Marshal(map[string]any{
-		"model":    relaycommon.Seedance25PublicAlias,
+		"model":    model,
 		"prompt":   "make a short landscape video",
 		"metadata": metadata,
 	})
@@ -66,15 +75,29 @@ func seedance25Video(role string) map[string]any {
 
 func TestValidateSeedance25ExactAliasAndLookalikes(t *testing.T) {
 	body := seedance25RequestBody(t, validSeedance25Metadata())
-	_, _, err := validateSeedance25Body(t, body, relaycommon.Seedance25PublicAlias)
+	_, _, err := validateSeedance25Body(t, body, seedance25TenantAliasForDoubaoTest)
 	require.NoError(t, err)
 
-	for _, modelName := range []string{"Seedance-2.5", "seedance-2.50", "seedance-2.5-fast", " seedance-2.5 "} {
+	secondTenantBody := seedance25RequestBodyForModel(t, seedance25SecondTenantAliasForDoubaoTest, validSeedance25Metadata())
+	_, _, err = validateSeedance25Body(t, secondTenantBody, seedance25SecondTenantAliasForDoubaoTest)
+	require.NoError(t, err)
+
+	for _, modelName := range []string{
+		"seedance-2.5",
+		"lsf-seedance-2.50-henrytest",
+		"LSF-Seedance-2.5-HenryTest",
+		" lsf-seedance-2.5-henrytest ",
+		"seedance-2.5-henrytest",
+		"lsf-seedance-2.0-henrytest",
+	} {
 		t.Run(modelName, func(t *testing.T) {
 			_, _, err := validateSeedance25Body(t, body, modelName)
 			require.Error(t, err)
 		})
 	}
+
+	_, _, err = validateSeedance25Body(t, secondTenantBody, seedance25TenantAliasForDoubaoTest)
+	require.Error(t, err)
 
 	lookalikeBody := []byte(`{"model":"seedance-2.50","prompt":"p","metadata":{"duration":4,"resolution":"720p"}}`)
 	_, _, err = validateSeedance25Body(t, lookalikeBody, "unrelated-video-model")
@@ -86,7 +109,7 @@ func TestValidateSeedance25Resolution(t *testing.T) {
 		t.Run("accept_"+resolution, func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["resolution"] = resolution
-			c, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			c, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.NoError(t, err)
 			req, getErr := relaycommon.GetTaskRequest(c)
 			require.NoError(t, getErr)
@@ -96,7 +119,7 @@ func TestValidateSeedance25Resolution(t *testing.T) {
 
 	t.Run("missing_defaults_to_720p", func(t *testing.T) {
 		metadata := map[string]any{"duration": 4}
-		c, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+		c, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 		require.NoError(t, err)
 		req, getErr := relaycommon.GetTaskRequest(c)
 		require.NoError(t, getErr)
@@ -107,7 +130,7 @@ func TestValidateSeedance25Resolution(t *testing.T) {
 		t.Run("reject", func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["resolution"] = resolution
-			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
 	}
@@ -118,23 +141,23 @@ func TestValidateSeedance25DurationStrictJSONInteger(t *testing.T) {
 		t.Run("accept_boundary", func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["duration"] = duration
-			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.NoError(t, err)
 		})
 	}
 
 	invalidBodies := map[string]string{
-		"missing": `{ "model":"seedance-2.5", "prompt":"p", "metadata":{"resolution":"720p"} }`,
-		"null":    `{ "model":"seedance-2.5", "prompt":"p", "metadata":{"duration":null,"resolution":"720p"} }`,
-		"string":  `{ "model":"seedance-2.5", "prompt":"p", "metadata":{"duration":"4","resolution":"720p"} }`,
-		"float":   `{ "model":"seedance-2.5", "prompt":"p", "metadata":{"duration":4.0,"resolution":"720p"} }`,
-		"three":   `{ "model":"seedance-2.5", "prompt":"p", "metadata":{"duration":3,"resolution":"720p"} }`,
-		"thirty1": `{ "model":"seedance-2.5", "prompt":"p", "metadata":{"duration":31,"resolution":"720p"} }`,
-		"smart":   `{ "model":"seedance-2.5", "prompt":"p", "metadata":{"duration":-1,"resolution":"720p"} }`,
+		"missing": `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"resolution":"720p"} }`,
+		"null":    `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":null,"resolution":"720p"} }`,
+		"string":  `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":"4","resolution":"720p"} }`,
+		"float":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":4.0,"resolution":"720p"} }`,
+		"three":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":3,"resolution":"720p"} }`,
+		"thirty1": `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":31,"resolution":"720p"} }`,
+		"smart":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":-1,"resolution":"720p"} }`,
 	}
 	for name, body := range invalidBodies {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := validateSeedance25Body(t, []byte(body), relaycommon.Seedance25PublicAlias)
+			_, _, err := validateSeedance25Body(t, []byte(body), seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
 	}
@@ -163,7 +186,7 @@ func TestValidateSeedance25SupportedInputModes(t *testing.T) {
 			if tt.ratio != "" {
 				metadata["ratio"] = tt.ratio
 			}
-			c, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			c, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.NoError(t, err)
 			if tt.expectedDefault != "" {
 				req, getErr := relaycommon.GetTaskRequest(c)
@@ -201,7 +224,7 @@ func TestValidateSeedance25RejectsInvalidInputCombinations(t *testing.T) {
 			if tt.ratio != nil {
 				metadata["ratio"] = tt.ratio
 			}
-			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
 	}
@@ -213,26 +236,26 @@ func TestValidateSeedance25RejectsEveryDisabledFieldByPresence(t *testing.T) {
 		t.Run("metadata_"+field, func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata[field] = false
-			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
 		t.Run("root_"+field, func(t *testing.T) {
 			root := map[string]any{
-				"model":    relaycommon.Seedance25PublicAlias,
+				"model":    seedance25TenantAliasForDoubaoTest,
 				"prompt":   "p",
 				"metadata": validSeedance25Metadata(),
 				field:      0,
 			}
 			body, marshalErr := common.Marshal(root)
 			require.NoError(t, marshalErr)
-			_, _, err := validateSeedance25Body(t, body, relaycommon.Seedance25PublicAlias)
+			_, _, err := validateSeedance25Body(t, body, seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
 	}
 
 	metadata := validSeedance25Metadata()
 	metadata["future_queue_control"] = nil
-	_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+	_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 	require.Error(t, err)
 }
 
@@ -251,7 +274,7 @@ func TestValidateSeedance25RejectsCanonicalDisabledValuesAndProjectOverride(t *t
 		t.Run(field, func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata[field] = value
-			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
 	}
@@ -259,14 +282,14 @@ func TestValidateSeedance25RejectsCanonicalDisabledValuesAndProjectOverride(t *t
 	for _, field := range []string{"ProjectName", "project_name"} {
 		t.Run(field, func(t *testing.T) {
 			root := map[string]any{
-				"model":    relaycommon.Seedance25PublicAlias,
+				"model":    seedance25TenantAliasForDoubaoTest,
 				"prompt":   "p",
 				"metadata": validSeedance25Metadata(),
 				field:      "client-value-marker",
 			}
 			body, err := common.Marshal(root)
 			require.NoError(t, err)
-			_, _, err = validateSeedance25Body(t, body, relaycommon.Seedance25PublicAlias)
+			_, _, err = validateSeedance25Body(t, body, seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
 	}
@@ -290,7 +313,7 @@ func TestValidateSeedance25GenerateAudioPreservesExplicitFalse(t *testing.T) {
 			if tt.include {
 				metadata["generate_audio"] = tt.value
 			}
-			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), relaycommon.Seedance25PublicAlias)
+			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 			require.NoError(t, err)
 			info.ChannelMeta = &relaycommon.ChannelMeta{
 				IsModelMapped:     true,
@@ -312,7 +335,7 @@ func TestValidateSeedance25GenerateAudioPreservesExplicitFalse(t *testing.T) {
 }
 
 func TestValidateSeedance25RequiresServerSideModelMapping(t *testing.T) {
-	c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, validSeedance25Metadata()), relaycommon.Seedance25PublicAlias)
+	c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, validSeedance25Metadata()), seedance25TenantAliasForDoubaoTest)
 	require.NoError(t, err)
 
 	taskErr := (&TaskAdaptor{}).ValidateMappedRequest(c, info)
@@ -332,12 +355,12 @@ func TestValidateSeedance25RequiresServerSideModelMapping(t *testing.T) {
 	require.Nil(t, (&TaskAdaptor{}).ValidateMappedRequest(c, info))
 	require.Equal(t, "mapped-provider-model-placeholder", info.UpstreamModelName)
 
-	info.UpstreamModelName = "  " + relaycommon.Seedance25PublicAlias + "  "
+	info.UpstreamModelName = "  " + seedance25TenantAliasForDoubaoTest + "  "
 	taskErr = (&TaskAdaptor{}).ValidateMappedRequest(c, info)
 	require.NotNil(t, taskErr)
 	require.Equal(t, "UPSTREAM_MAPPING_MISSING", taskErr.Code)
 
-	info.UpstreamModelName = "  SeEdAnCe-2.5  "
+	info.UpstreamModelName = "  " + strings.ToUpper(seedance25TenantAliasForDoubaoTest) + "  "
 	taskErr = (&TaskAdaptor{}).ValidateMappedRequest(c, info)
 	require.NotNil(t, taskErr)
 	require.Equal(t, "UPSTREAM_MAPPING_MISSING", taskErr.Code)
@@ -352,14 +375,14 @@ func TestSeedance25BuildRequestBodyDirectlyRejectsUnsafeMappings(t *testing.T) {
 		{name: "mapping flag false", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: false, UpstreamModelName: "placeholder-upstream-model"}},
 		{name: "empty mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: ""}},
 		{name: "blank mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "  \t "}},
-		{name: "public alias mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: relaycommon.Seedance25PublicAlias}},
-		{name: "trimmed public alias mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "  seedance-2.5  "}},
-		{name: "case folded public alias mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "  SeEdAnCe-2.5  "}},
+		{name: "public alias mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: seedance25TenantAliasForDoubaoTest}},
+		{name: "trimmed public alias mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "  " + seedance25TenantAliasForDoubaoTest + "  "}},
+		{name: "case folded public alias mapping", channelMeta: &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "  " + strings.ToUpper(seedance25TenantAliasForDoubaoTest) + "  "}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, validSeedance25Metadata()), relaycommon.Seedance25PublicAlias)
+			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, validSeedance25Metadata()), seedance25TenantAliasForDoubaoTest)
 			require.NoError(t, err)
 			info.ChannelMeta = tt.channelMeta
 			require.NotPanics(t, func() {
@@ -380,7 +403,7 @@ func TestSeedance25BuildRequestBodyDirectlyTrimsValidMappings(t *testing.T) {
 
 	for _, mapping := range validMappings {
 		t.Run(mapping, func(t *testing.T) {
-			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, validSeedance25Metadata()), relaycommon.Seedance25PublicAlias)
+			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, validSeedance25Metadata()), seedance25TenantAliasForDoubaoTest)
 			require.NoError(t, err)
 			info.ChannelMeta = &relaycommon.ChannelMeta{
 				IsModelMapped:     true,
@@ -396,7 +419,7 @@ func TestSeedance25BuildRequestBodyDirectlyTrimsValidMappings(t *testing.T) {
 			expectedMapping := strings.TrimSpace(mapping)
 			require.Equal(t, expectedMapping, info.UpstreamModelName)
 			require.Equal(t, expectedMapping, payload["model"])
-			require.NotEqual(t, relaycommon.Seedance25PublicAlias, payload["model"])
+			require.NotEqual(t, seedance25TenantAliasForDoubaoTest, payload["model"])
 		})
 	}
 }

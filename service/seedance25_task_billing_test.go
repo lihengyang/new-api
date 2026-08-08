@@ -15,17 +15,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const seedance25TenantAliasForServiceTest = relaycommon.Seedance25TenantAliasPrefix + "henrytest"
+
 func markTaskAsSeedance25(task *model.Task, hasVideo bool) {
 	numerator, denominator := int64(1), int64(1)
 	if hasVideo {
 		numerator, denominator = 64, 107
 	}
-	task.Properties.OriginModelName = relaycommon.Seedance25PublicAlias
+	task.Properties.OriginModelName = seedance25TenantAliasForServiceTest
 	task.Properties.UpstreamModelName = "provider_model_marker"
 	if task.PrivateData.BillingContext == nil {
 		task.PrivateData.BillingContext = &model.TaskBillingContext{}
 	}
-	task.PrivateData.BillingContext.OriginModelName = relaycommon.Seedance25PublicAlias
+	task.PrivateData.BillingContext.OriginModelName = seedance25TenantAliasForServiceTest
 	task.PrivateData.BillingContext.BillingFamily = relaycommon.Seedance25BillingFamily
 	task.PrivateData.BillingContext.BillingRuleVersion = "seedance25_test_rule"
 	task.PrivateData.BillingContext.ModelRatio = 5.35
@@ -78,7 +80,7 @@ func TestSeedance25RecalculateAuditsPositiveNegativeAndZeroDelta(t *testing.T) {
 			require.NotNil(t, log)
 			require.Equal(t, tt.expectedLogType, log.Type)
 			require.Equal(t, tt.expectedLogQuota, log.Quota)
-			require.Equal(t, relaycommon.Seedance25PublicAlias, log.ModelName)
+			require.Equal(t, seedance25TenantAliasForServiceTest, log.ModelName)
 			other := taskBillingLogOther(t, log)
 			require.EqualValues(t, tt.preConsumed, other["pre_consumed_quota"])
 			require.EqualValues(t, tt.actualQuota, other["actual_quota"])

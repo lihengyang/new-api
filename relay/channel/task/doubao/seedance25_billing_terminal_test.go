@@ -26,12 +26,12 @@ func seedance25TerminalTask(hasVideo bool) *model.Task {
 		Quota:  700,
 		Status: model.TaskStatusInProgress,
 		Properties: model.Properties{
-			OriginModelName: relaycommon.Seedance25PublicAlias,
+			OriginModelName: seedance25TenantAliasForDoubaoTest,
 		},
 		PrivateData: model.TaskPrivateData{
 			UpstreamTaskID: "provider_task_marker",
 			BillingContext: &model.TaskBillingContext{
-				OriginModelName:       relaycommon.Seedance25PublicAlias,
+				OriginModelName:       seedance25TenantAliasForDoubaoTest,
 				BillingFamily:         relaycommon.Seedance25BillingFamily,
 				BillingRuleVersion:    seedance25BillingRuleVersion,
 				ModelRatio:            seedance25ModelRatio,
@@ -44,17 +44,21 @@ func seedance25TerminalTask(hasVideo bool) *model.Task {
 	}
 }
 
-func TestResolveSeedance25BillingUsesExactOriginAliasOnly(t *testing.T) {
-	ctx, matched, err := ResolveSeedanceIntlBilling(
-		relaycommon.Seedance25PublicAlias,
-		"mapped-provider-model",
-		map[string]any{"resolution": "720p", "duration": 4},
-	)
-	require.NoError(t, err)
-	require.True(t, matched)
-	require.Equal(t, relaycommon.Seedance25BillingFamily, ctx.Family)
+func TestResolveSeedance25BillingUsesExactTenantOriginAliasOnly(t *testing.T) {
+	for _, origin := range []string{seedance25TenantAliasForDoubaoTest, seedance25SecondTenantAliasForDoubaoTest} {
+		t.Run(origin, func(t *testing.T) {
+			ctx, matched, err := ResolveSeedanceIntlBilling(
+				origin,
+				"mapped-provider-model",
+				map[string]any{"resolution": "720p", "duration": 4},
+			)
+			require.NoError(t, err)
+			require.True(t, matched)
+			require.Equal(t, relaycommon.Seedance25BillingFamily, ctx.Family)
+		})
+	}
 
-	for _, origin := range []string{"seedance-2.50", "Seedance-2.5", "seedance-2.0"} {
+	for _, origin := range []string{"seedance-2.5", "seedance-2.50", "Seedance-2.5", "seedance-2.0"} {
 		t.Run(origin, func(t *testing.T) {
 			billing, ok, resolveErr := ResolveSeedanceIntlBilling(origin, "mapped-seedance-2.5-provider-name", map[string]any{"resolution": "720p"})
 			require.NoError(t, resolveErr)
@@ -83,7 +87,7 @@ func TestResolveSeedance25BillingVideoAndNoVideoRatios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, matched, err := ResolveSeedanceIntlBilling(relaycommon.Seedance25PublicAlias, "mapped-provider-model", tt.metadata)
+			ctx, matched, err := ResolveSeedanceIntlBilling(seedance25TenantAliasForDoubaoTest, "mapped-provider-model", tt.metadata)
 			require.NoError(t, err)
 			require.True(t, matched)
 			require.Equal(t, tt.inputType, ctx.InputType)
@@ -98,7 +102,7 @@ func TestResolveSeedance25BillingVideoAndNoVideoRatios(t *testing.T) {
 
 func TestSeedance25PriceDataValidationAndRatioSnapshot(t *testing.T) {
 	c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{
-		Model:  relaycommon.Seedance25PublicAlias,
+		Model:  seedance25TenantAliasForDoubaoTest,
 		Prompt: "p",
 		Metadata: map[string]any{
 			"duration":   4,
@@ -107,7 +111,7 @@ func TestSeedance25PriceDataValidationAndRatioSnapshot(t *testing.T) {
 		},
 	})
 	info := &relaycommon.RelayInfo{
-		OriginModelName: relaycommon.Seedance25PublicAlias,
+		OriginModelName: seedance25TenantAliasForDoubaoTest,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			IsModelMapped:     true,
 			UpstreamModelName: "mapped-provider-model",
@@ -162,7 +166,7 @@ func TestSeedance25PriceDataRejectsNonFiniteZeroNegativeAndLooseModelRatios(t *t
 		t.Run("model_ratio_"+name, func(t *testing.T) {
 			priceData := base
 			priceData.ModelRatio = invalidValue
-			info := &relaycommon.RelayInfo{OriginModelName: relaycommon.Seedance25PublicAlias, PriceData: priceData}
+			info := &relaycommon.RelayInfo{OriginModelName: seedance25TenantAliasForDoubaoTest, PriceData: priceData}
 			require.NotPanics(t, func() {
 				require.NotNil(t, (&TaskAdaptor{}).ValidatePriceData(nil, info))
 			})
@@ -170,7 +174,7 @@ func TestSeedance25PriceDataRejectsNonFiniteZeroNegativeAndLooseModelRatios(t *t
 		t.Run("group_ratio_"+name, func(t *testing.T) {
 			priceData := base
 			priceData.GroupRatioInfo.GroupRatio = invalidValue
-			info := &relaycommon.RelayInfo{OriginModelName: relaycommon.Seedance25PublicAlias, PriceData: priceData}
+			info := &relaycommon.RelayInfo{OriginModelName: seedance25TenantAliasForDoubaoTest, PriceData: priceData}
 			require.NotPanics(t, func() {
 				require.NotNil(t, (&TaskAdaptor{}).ValidatePriceData(nil, info))
 			})
@@ -178,7 +182,7 @@ func TestSeedance25PriceDataRejectsNonFiniteZeroNegativeAndLooseModelRatios(t *t
 		t.Run("other_ratio_"+name, func(t *testing.T) {
 			priceData := base
 			priceData.OtherRatios = map[string]float64{"seedance_intl_billing": invalidValue}
-			info := &relaycommon.RelayInfo{OriginModelName: relaycommon.Seedance25PublicAlias, PriceData: priceData}
+			info := &relaycommon.RelayInfo{OriginModelName: seedance25TenantAliasForDoubaoTest, PriceData: priceData}
 			require.NotPanics(t, func() {
 				require.NotNil(t, (&TaskAdaptor{}).ValidatePriceData(nil, info))
 			})
@@ -187,7 +191,7 @@ func TestSeedance25PriceDataRejectsNonFiniteZeroNegativeAndLooseModelRatios(t *t
 
 	loose := base
 	loose.ModelRatio = math.Nextafter(seedance25ModelRatio, math.Inf(1))
-	info := &relaycommon.RelayInfo{OriginModelName: relaycommon.Seedance25PublicAlias, PriceData: loose}
+	info := &relaycommon.RelayInfo{OriginModelName: seedance25TenantAliasForDoubaoTest, PriceData: loose}
 	require.NotNil(t, (&TaskAdaptor{}).ValidatePriceData(nil, info))
 }
 
@@ -213,9 +217,9 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 			if tt.video {
 				metadata["content"] = []any{seedance25Video("reference_video")}
 			}
-			c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{Model: relaycommon.Seedance25PublicAlias, Prompt: "p", Metadata: metadata})
+			c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{Model: seedance25TenantAliasForDoubaoTest, Prompt: "p", Metadata: metadata})
 			info := &relaycommon.RelayInfo{
-				OriginModelName: relaycommon.Seedance25PublicAlias,
+				OriginModelName: seedance25TenantAliasForDoubaoTest,
 				ChannelMeta: &relaycommon.ChannelMeta{
 					IsModelMapped:     true,
 					UpstreamModelName: "mapped-provider-model",
@@ -307,7 +311,7 @@ func TestSeedance25AdaptiveAnd16By9UseSameReservationCeiling(t *testing.T) {
 			reservationForRatio := func(ratio string) int {
 				t.Helper()
 				c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{
-					Model:  relaycommon.Seedance25PublicAlias,
+					Model:  seedance25TenantAliasForDoubaoTest,
 					Prompt: "p",
 					Metadata: map[string]any{
 						"duration":   4,
@@ -316,7 +320,7 @@ func TestSeedance25AdaptiveAnd16By9UseSameReservationCeiling(t *testing.T) {
 					},
 				})
 				info := &relaycommon.RelayInfo{
-					OriginModelName: relaycommon.Seedance25PublicAlias,
+					OriginModelName: seedance25TenantAliasForDoubaoTest,
 					ChannelMeta: &relaycommon.ChannelMeta{
 						IsModelMapped:     true,
 						UpstreamModelName: "placeholder-upstream-model",
@@ -346,7 +350,7 @@ func TestSeedance25AdaptiveAnd16By9UseSameReservationCeiling(t *testing.T) {
 
 func TestSeedance25ReservationRejectsNonFiniteZeroAndNegativeRatiosWithoutPanic(t *testing.T) {
 	c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{
-		Model:  relaycommon.Seedance25PublicAlias,
+		Model:  seedance25TenantAliasForDoubaoTest,
 		Prompt: "p",
 		Metadata: map[string]any{
 			"duration":   4,
@@ -355,7 +359,7 @@ func TestSeedance25ReservationRejectsNonFiniteZeroAndNegativeRatiosWithoutPanic(
 	})
 	newInfo := func() *relaycommon.RelayInfo {
 		info := &relaycommon.RelayInfo{
-			OriginModelName: relaycommon.Seedance25PublicAlias,
+			OriginModelName: seedance25TenantAliasForDoubaoTest,
 			ChannelMeta: &relaycommon.ChannelMeta{
 				UpstreamModelName: "placeholder-upstream-model",
 				IsModelMapped:     true,
@@ -601,7 +605,7 @@ func TestSeedance25TaskTypeConstraintWithoutStatusStillTerminatesSafely(t *testi
 func TestSeedance25SubmitResponseUsesOnlyPublicIdentity(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	info := &relaycommon.RelayInfo{
-		OriginModelName: relaycommon.Seedance25PublicAlias,
+		OriginModelName: seedance25TenantAliasForDoubaoTest,
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{
 			PublicTaskID: "task_public_seedance25",
 		},
@@ -617,7 +621,7 @@ func TestSeedance25SubmitResponseUsesOnlyPublicIdentity(t *testing.T) {
 	publicBody, err := common.Marshal(publicResponse.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(publicBody), "task_public_seedance25")
-	require.Contains(t, string(publicBody), relaycommon.Seedance25PublicAlias)
+	require.Contains(t, string(publicBody), seedance25TenantAliasForDoubaoTest)
 	require.NotContains(t, string(publicBody), "provider_task_marker")
 }
 
