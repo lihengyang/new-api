@@ -3,12 +3,15 @@ package doubao
 import (
 	"fmt"
 	"strings"
+
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
 const (
 	seedanceBillingFamilyStandard = "seedance_2_0"
 	seedanceBillingFamilyFast     = "seedance_2_0_fast"
 	seedanceBillingFamilyMini     = "seedance_2_0_mini"
+	seedanceBillingFamily25       = relaycommon.Seedance25BillingFamily
 
 	seedanceBillingResolution480p720p = "480p_720p"
 	seedanceBillingResolution1080p    = "1080p"
@@ -19,6 +22,7 @@ const (
 
 	seedanceBillingRuleVersion     = "byteplus_seedance_2_0_intl_2026_06_4k"
 	seedanceMiniBillingRuleVersion = "byteplus_seedance_2_0_mini_intl_2026_06_rc1"
+	seedance25BillingRuleVersion   = "byteplus_seedance_2_5_intl_2026_08_p0"
 )
 
 type SeedanceBillingContext struct {
@@ -120,13 +124,29 @@ var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 		Ratio:            0.0021 / 0.0035,
 		RuleVersion:      seedanceMiniBillingRuleVersion,
 	},
+	{
+		Family:           seedanceBillingFamily25,
+		HasVideoInput:    false,
+		ResolutionGroup:  seedanceBillingResolution480p720p,
+		UnitPriceUsdPerK: 0.0107,
+		Ratio:            1.0,
+		RuleVersion:      seedance25BillingRuleVersion,
+	},
+	{
+		Family:           seedanceBillingFamily25,
+		HasVideoInput:    true,
+		ResolutionGroup:  seedanceBillingResolution480p720p,
+		UnitPriceUsdPerK: 0.0064,
+		Ratio:            64.0 / 107.0,
+		RuleVersion:      seedance25BillingRuleVersion,
+	},
 }
 
 // resolveSeedanceBillingFamily recognizes released Seedance 2.0 video-generation
 // models from either customer-facing aliases or upstream provider model names.
 // It deliberately does not match seedance-virtual-asset-admin or
 // seedance-real-human-asset-admin, and does not classify Mini as standard.
-func resolveSeedanceBillingFamily(modelNames ...string) string {
+func resolveSeedance20BillingFamily(modelNames ...string) string {
 	for _, modelName := range modelNames {
 		normalized := strings.ToLower(strings.TrimSpace(modelName))
 		if normalized == "" {
@@ -155,6 +175,13 @@ func resolveSeedanceBillingFamily(modelNames ...string) string {
 	return ""
 }
 
+func resolveSeedanceBillingFamily(originModelName, upstreamModelName string) string {
+	if relaycommon.IsSeedance25OriginAlias(originModelName) {
+		return seedanceBillingFamily25
+	}
+	return resolveSeedance20BillingFamily(originModelName, upstreamModelName)
+}
+
 func normalizeSeedanceBillingResolution(metadata map[string]interface{}) (resolution string, resolutionGroup string, err error) {
 	raw := metadataString(metadata, "resolution")
 	if raw == "" {
@@ -175,6 +202,19 @@ func normalizeSeedanceBillingResolution(metadata map[string]interface{}) (resolu
 		return "4k", seedanceBillingResolution4K, nil
 	default:
 		return "", "", fmt.Errorf("unsupported Seedance 2.0 resolution %q; supported values are 480p, 720p, 1080p, and 4k", raw)
+	}
+}
+
+func normalizeSeedance25BillingResolution(metadata map[string]interface{}) (resolution string, resolutionGroup string, err error) {
+	raw := metadataString(metadata, "resolution")
+	if raw == "" {
+		return "720p", seedanceBillingResolution480p720p, nil
+	}
+	switch raw {
+	case "480p", "720p":
+		return raw, seedanceBillingResolution480p720p, nil
+	default:
+		return "", "", fmt.Errorf("unsupported Seedance 2.5 resolution %q; supported values are 480p and 720p", raw)
 	}
 }
 
@@ -216,6 +256,9 @@ func ResolveSeedanceIntlBilling(originModelName, upstreamModelName string, metad
 	}
 
 	resolution, resolutionGroup, err := normalizeSeedanceBillingResolution(metadata)
+	if family == seedanceBillingFamily25 {
+		resolution, resolutionGroup, err = normalizeSeedance25BillingResolution(metadata)
+	}
 	if err != nil {
 		return nil, true, err
 	}

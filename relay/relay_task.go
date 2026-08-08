@@ -222,6 +222,14 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 			info.PriceData.AddOtherRatio(k, v)
 		}
 	}
+	// Validate the complete price state after adaptor ratios and snapshot
+	// provenance have been populated, but before any quota multiplication or
+	// reservation. Adaptors that do not need this hook remain unchanged.
+	if validator, ok := adaptor.(channel.TaskPriceDataValidator); ok {
+		if taskErr := validator.ValidatePriceData(c, info); taskErr != nil {
+			return nil, taskErr
+		}
+	}
 
 	// 6. 将 OtherRatios 应用到基础额度
 	if !common.StringsContains(constant.TaskPricePatches, modelName) {
@@ -254,9 +262,15 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+			return nil, service.TaskErrorWrapper(errors.New("upstream task submission failed"), "do_request_failed", http.StatusInternalServerError)
+		}
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
+		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+			return nil, service.TaskErrorWrapper(errors.New("upstream task submission failed"), "fail_to_fetch_task", resp.StatusCode)
+		}
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}

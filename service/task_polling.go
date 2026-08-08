@@ -31,6 +31,18 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+// TaskResultPolicy is an optional adaptor hook for model-specific terminal
+// validation and sanitized persistence before any status CAS or billing action.
+type TaskResultPolicy interface {
+	ApplyTaskResultPolicy(task *model.Task, taskResult *relaycommon.TaskInfo, responseBody []byte) ([]byte, error)
+}
+
+// TaskContextResultParser is an optional adaptor hook for result parsing that
+// must depend on the task's saved family without changing legacy parsers.
+type TaskContextResultParser interface {
+	ParseTaskResultForTask(task *model.Task, responseBody []byte) (*relaycommon.TaskInfo, error)
+}
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -333,7 +345,11 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	adaptor.Init(info)
 	for _, taskId := range taskIds {
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
+			displayTaskID := taskId
+			if task := taskM[taskId]; taskUsesSeedance25Policy(task) {
+				displayTaskID = task.TaskID
+			}
+			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", displayTaskID, err.Error()))
 		}
 		// sleep 1 second between each task to avoid hitting rate limits of upstream platforms
 		time.Sleep(1 * time.Second)
@@ -353,6 +369,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+	if taskUsesSeedance25Policy(task) && !task.Status.IsUpstreamPollable() {
+		return nil
+	}
 	key := ch.Key
 
 	privateData := task.PrivateData
@@ -364,15 +383,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		"action":  task.Action,
 	}, proxy)
 	if err != nil {
+		if taskUsesSeedance25Policy(task) {
+			return fmt.Errorf("fetchTask failed for task %s", task.TaskID)
+		}
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}
 	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if taskUsesSeedance25Policy(task) {
+			return fmt.Errorf("readAll failed for task %s: %w", task.TaskID, err)
+		}
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
-
-	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
 
 	snap := task.Snapshot()
 
@@ -380,7 +403,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
 	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
-		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask parsed as new api response format: %+v", responseItems))
+		if !taskUsesSeedance25Policy(task) {
+			logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask parsed as new api response format: %+v", responseItems))
+		}
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
 		taskResult.Status = string(t.Status)
@@ -388,13 +413,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Progress = t.Progress
 		taskResult.Reason = t.FailReason
 		task.Data = t.Data
-	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
-		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+	} else {
+		if parser, ok := adaptor.(TaskContextResultParser); ok {
+			taskResult, err = parser.ParseTaskResultForTask(task, responseBody)
+		} else {
+			taskResult, err = adaptor.ParseTaskResult(responseBody)
+		}
+		if err != nil {
+			if taskUsesSeedance25Policy(task) {
+				return fmt.Errorf("parseTaskResult failed for task %s: %w", task.TaskID, err)
+			}
+			return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+		}
 	}
-
-	task.Data = redactVideoResponseBody(responseBody)
-
-	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask taskResult: %+v", taskResult))
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
@@ -413,10 +444,29 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				taskResult = relaycommon.FailTaskInfo("upstream returned error")
 			} else {
 				// unknown error format, log original response
-				logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
+				if taskUsesSeedance25Policy(task) {
+					logger.LogError(ctx, fmt.Sprintf("Task %s returned an unrecognized upstream status", task.TaskID))
+				} else {
+					logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
+				}
 				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
 			}
 		}
+	}
+
+	persistedBody := responseBody
+	if policy, ok := adaptor.(TaskResultPolicy); ok {
+		persistedBody, err = policy.ApplyTaskResultPolicy(task, taskResult, responseBody)
+		if err != nil {
+			return fmt.Errorf("task result policy failed for task %s: %w", task.TaskID, err)
+		}
+	}
+	task.Data = redactVideoResponseBody(persistedBody)
+	if taskUsesSeedance25Policy(task) {
+		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask task=%s status=%s progress=%s", task.TaskID, taskResult.Status, taskResult.Progress))
+	} else {
+		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
+		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask taskResult: %+v", taskResult))
 	}
 
 	shouldRefund := false
@@ -451,7 +501,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		shouldSettle = true
 	case model.TaskStatusFailure:
-		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
+		if !taskUsesSeedance25Policy(task) {
+			logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
+		}
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
@@ -499,6 +551,18 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+func taskUsesSeedance25Policy(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if bc := task.PrivateData.BillingContext; bc != nil {
+		if bc.BillingFamily == relaycommon.Seedance25BillingFamily || relaycommon.IsSeedance25OriginAlias(bc.OriginModelName) {
+			return true
+		}
+	}
+	return relaycommon.IsSeedance25OriginAlias(task.Properties.OriginModelName)
 }
 
 func redactVideoResponseBody(body []byte) []byte {
@@ -549,6 +613,12 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
 		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+		return
+	}
+	// Seedance 2.5 may settle only from the adaptor's strict
+	// usage.completion_tokens path. Never fall back to total_tokens or mutable
+	// runtime ratio settings for this family.
+	if taskUsesSeedance25Policy(task) {
 		return
 	}
 	// 2. 回退到 token 重算

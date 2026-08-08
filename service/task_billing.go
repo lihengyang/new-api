@@ -46,7 +46,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
 	}
-	if info.IsModelMapped {
+	if info.IsModelMapped && !relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
@@ -132,7 +132,7 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		}
 	}
 	props := task.Properties
-	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
+	if !taskUsesSeedance25Policy(task) && props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
@@ -194,6 +194,24 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
+		if taskUsesSeedance25Policy(task) {
+			other := taskBillingOther(task)
+			other["task_id"] = task.TaskID
+			other["pre_consumed_quota"] = preConsumedQuota
+			other["actual_quota"] = actualQuota
+			model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+				UserId:    task.UserId,
+				LogType:   model.LogTypeConsume,
+				Content:   reason,
+				ChannelId: task.ChannelId,
+				ModelName: taskModelName(task),
+				Quota:     0,
+				TokenId:   task.PrivateData.TokenId,
+				Group:     task.Group,
+				Other:     other,
+				Force:     true,
+			})
+		}
 		return
 	}
 
@@ -241,6 +259,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		TokenId:   task.PrivateData.TokenId,
 		Group:     task.Group,
 		Other:     other,
+		Force:     taskUsesSeedance25Policy(task),
 	})
 }
 

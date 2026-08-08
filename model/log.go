@@ -317,10 +317,11 @@ type RecordTaskBillingLogParams struct {
 	TokenId   int
 	Group     string
 	Other     map[string]interface{}
+	Force     bool
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
-	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
+	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled && !params.Force {
 		return
 	}
 	username, _ := GetUsernameById(params.UserId, false)

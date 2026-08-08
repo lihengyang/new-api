@@ -25,6 +25,13 @@ type PriceData struct {
 	Quota                int // 按次计费的最终额度（MJ / Task）
 	QuotaToPreConsume    int // 按量计费的预消耗额度
 	GroupRatioInfo       GroupRatioInfo
+	// Async task billing provenance. These fields are copied into the task's
+	// private JSON billing context so terminal settlement can use the exact
+	// submit-time snapshot rather than mutable runtime pricing.
+	BillingFamily         string
+	BillingRuleVersion    string
+	OtherRatioNumerator   int64
+	OtherRatioDenominator int64
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {

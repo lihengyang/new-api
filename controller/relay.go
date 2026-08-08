@@ -702,12 +702,16 @@ func applyTaskPrivateData(privateData *model.TaskPrivateData, relayInfo *relayco
 	privateData.SubscriptionId = relayInfo.SubscriptionId
 	privateData.TokenId = relayInfo.TokenId
 	privateData.BillingContext = &model.TaskBillingContext{
-		ModelPrice:      relayInfo.PriceData.ModelPrice,
-		GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-		ModelRatio:      relayInfo.PriceData.ModelRatio,
-		OtherRatios:     relayInfo.PriceData.OtherRatios,
-		OriginModelName: relayInfo.OriginModelName,
-		PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+		ModelPrice:            relayInfo.PriceData.ModelPrice,
+		GroupRatio:            relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:            relayInfo.PriceData.ModelRatio,
+		OtherRatios:           relayInfo.PriceData.OtherRatios,
+		OriginModelName:       relayInfo.OriginModelName,
+		PerCallBilling:        common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+		BillingFamily:         relayInfo.PriceData.BillingFamily,
+		BillingRuleVersion:    relayInfo.PriceData.BillingRuleVersion,
+		OtherRatioNumerator:   relayInfo.PriceData.OtherRatioNumerator,
+		OtherRatioDenominator: relayInfo.PriceData.OtherRatioDenominator,
 	}
 }
 

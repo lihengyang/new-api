@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -111,7 +112,14 @@ type TaskAdaptor struct {
 
 const (
 	seedanceMiniMaxDurationSeconds = 15
+	seedance25MaxDurationSeconds   = 30
 	seedanceMiniOutputFPS          = 24
+)
+
+const (
+	seedance25ReservationFPS           = 24
+	seedance25ReservationMaxPixels480p = 428544
+	seedance25ReservationMaxPixels720p = 927408
 )
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -132,6 +140,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 
+	if taskErr := validateSeedance25Request(c, info, &req); taskErr != nil {
+		return taskErr
+	}
 	return validateSeedanceRequestResolution(req, req.Model, info.OriginModelName)
 }
 
@@ -142,6 +153,13 @@ func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.Re
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+		mappedModelName, err := seedance25NormalizedMappedModel(info)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("server-side model mapping is not configured"), "UPSTREAM_MAPPING_MISSING", http.StatusServiceUnavailable)
+		}
+		info.UpstreamModelName = mappedModelName
+	}
 	return validateSeedanceRequestResolution(req, info.OriginModelName, info.UpstreamModelName)
 }
 
@@ -150,6 +168,18 @@ func validateSeedanceRequestResolution(req relaycommon.TaskSubmitReq, originMode
 		return service.TaskErrorWrapperLocal(err, "invalid_request_error", http.StatusBadRequest)
 	}
 	return nil
+}
+
+func seedance25NormalizedMappedModel(info *relaycommon.RelayInfo) (string, error) {
+	if info == nil || info.ChannelMeta == nil {
+		return "", fmt.Errorf("server-side model mapping is not configured")
+	}
+	mappedModelName := strings.TrimSpace(info.UpstreamModelName)
+	publicModelName := strings.TrimSpace(info.OriginModelName)
+	if !info.IsModelMapped || mappedModelName == "" || strings.EqualFold(mappedModelName, publicModelName) {
+		return "", fmt.Errorf("server-side model mapping is not configured")
+	}
+	return mappedModelName, nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -179,6 +209,16 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		if err != nil {
 			return nil
 		}
+		if billingCtx.Family == seedanceBillingFamily25 {
+			info.PriceData.BillingFamily = billingCtx.Family
+			info.PriceData.BillingRuleVersion = billingCtx.RuleVersion
+			info.PriceData.OtherRatioNumerator = 1
+			info.PriceData.OtherRatioDenominator = 1
+			if billingCtx.InputType == seedanceBillingInputVideo {
+				info.PriceData.OtherRatioNumerator = 64
+				info.PriceData.OtherRatioDenominator = 107
+			}
+		}
 		return map[string]float64{
 			"seedance_intl_billing": billingCtx.Ratio,
 		}
@@ -192,32 +232,57 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return nil
 }
 
-// EstimatePrechargeQuota raises Mini reservations to the official token formula
-// when that estimate is higher than the shared fixed task precharge.
+// EstimatePrechargeQuota raises Mini and Seedance 2.5 reservations to the
+// existing output-token formula when it exceeds the shared task precharge.
 func (a *TaskAdaptor) EstimatePrechargeQuota(c *gin.Context, info *relaycommon.RelayInfo) (int, bool) {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return 0, false
 	}
 	billingCtx, ok, err := ResolveSeedanceIntlBilling(info.OriginModelName, info.UpstreamModelName, req.Metadata)
-	if err != nil || !ok || billingCtx.Family != seedanceBillingFamilyMini {
+	if err != nil || !ok || (billingCtx.Family != seedanceBillingFamilyMini && billingCtx.Family != seedanceBillingFamily25) {
 		return 0, false
 	}
 	if info.PriceData.UsePrice || info.PriceData.ModelRatio <= 0 {
 		return 0, false
 	}
+	if billingCtx.Family == seedanceBillingFamily25 {
+		expectedOtherRatio, ok := seedance25ExpectedOtherRatio(
+			info.PriceData.OtherRatioNumerator,
+			info.PriceData.OtherRatioDenominator,
+		)
+		otherRatio, hasOtherRatio := info.PriceData.OtherRatios["seedance_intl_billing"]
+		if !seedance25ApprovedModelRatio(info.PriceData.ModelRatio) ||
+			!seedance25FinitePositive(info.PriceData.GroupRatioInfo.GroupRatio) ||
+			!ok || !hasOtherRatio || !seedance25FinitePositive(otherRatio) ||
+			otherRatio != expectedOtherRatio || !seedance25FinitePositive(billingCtx.Ratio) ||
+			billingCtx.Ratio != expectedOtherRatio {
+			return 0, false
+		}
+	}
 
-	outputDuration := seedanceMiniOutputDurationSeconds(req)
+	maxDuration := seedanceMiniMaxDurationSeconds
+	if billingCtx.Family == seedanceBillingFamily25 {
+		maxDuration = seedance25MaxDurationSeconds
+	}
+	outputDuration := seedanceOutputDurationSeconds(req, maxDuration)
 	inputDuration := 0
 	if billingCtx.InputType == seedanceBillingInputVideo {
 		// Current LSF submit path does not inspect remote reference-video
-		// duration. Use the Mini max as a conservative reservation ceiling.
-		inputDuration = seedanceMiniMaxDurationSeconds
+		// duration. Use the family maximum as a conservative input ceiling.
+		inputDuration = maxDuration
 	}
 	width, height := seedanceMiniOutputDimensions(billingCtx.Resolution)
 	estimatedTokens := math.Ceil(float64(inputDuration+outputDuration) * float64(width) * float64(height) * seedanceMiniOutputFPS / 1024)
+	if billingCtx.Family == seedanceBillingFamily25 {
+		maxPixels, ok := seedance25ReservationPixelCeiling(billingCtx.Resolution)
+		if !ok {
+			return 0, false
+		}
+		estimatedTokens = math.Ceil(float64(inputDuration+outputDuration) * float64(maxPixels) * seedance25ReservationFPS / 1024)
+	}
 	quota := math.Ceil(estimatedTokens * info.PriceData.ModelRatio * info.PriceData.GroupRatioInfo.GroupRatio * billingCtx.Ratio)
-	if quota <= 0 {
+	if math.IsNaN(quota) || math.IsInf(quota, 0) || quota <= 0 || quota > float64(^uint(0)>>1) {
 		return 0, false
 	}
 	return int(quota), true
@@ -232,27 +297,38 @@ func seedanceMiniOutputDimensions(resolution string) (int, int) {
 	}
 }
 
-func seedanceMiniOutputDurationSeconds(req relaycommon.TaskSubmitReq) int {
-	if duration, ok := metadataInt(req.Metadata, "duration"); ok {
-		return normalizeSeedanceMiniDuration(duration)
+func seedance25ReservationPixelCeiling(resolution string) (int, bool) {
+	switch resolution {
+	case "480p":
+		return seedance25ReservationMaxPixels480p, true
+	case "720p":
+		return seedance25ReservationMaxPixels720p, true
+	default:
+		return 0, false
 	}
-	if req.Duration != 0 {
-		return normalizeSeedanceMiniDuration(req.Duration)
-	}
-	if seconds, err := strconv.Atoi(req.Seconds); err == nil && seconds != 0 {
-		return normalizeSeedanceMiniDuration(seconds)
-	}
-	return seedanceMiniMaxDurationSeconds
 }
 
-func normalizeSeedanceMiniDuration(duration int) int {
+func seedanceOutputDurationSeconds(req relaycommon.TaskSubmitReq, maxDuration int) int {
+	if duration, ok := metadataInt(req.Metadata, "duration"); ok {
+		return normalizeSeedanceDuration(duration, maxDuration)
+	}
+	if req.Duration != 0 {
+		return normalizeSeedanceDuration(req.Duration, maxDuration)
+	}
+	if seconds, err := strconv.Atoi(req.Seconds); err == nil && seconds != 0 {
+		return normalizeSeedanceDuration(seconds, maxDuration)
+	}
+	return maxDuration
+}
+
+func normalizeSeedanceDuration(duration int, maxDuration int) int {
 	if duration == -1 {
-		return seedanceMiniMaxDurationSeconds
+		return maxDuration
 	}
 	if duration > 0 {
 		return duration
 	}
-	return seedanceMiniMaxDurationSeconds
+	return maxDuration
 }
 
 func metadataInt(metadata map[string]interface{}, key string) (int, bool) {
@@ -323,6 +399,13 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
+	if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+		mappedModelName, err := seedance25NormalizedMappedModel(info)
+		if err != nil {
+			return nil, err
+		}
+		info.UpstreamModelName = mappedModelName
+	}
 
 	body, err := a.convertToRequestPayload(&req)
 	if err != nil {
@@ -337,7 +420,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 	if info.IsModelMapped {
-		body.Model = info.UpstreamModelName
+		mappedModelName := info.UpstreamModelName
+		body.Model = mappedModelName
 	} else {
 		info.UpstreamModelName = body.Model
 	}
@@ -374,7 +458,11 @@ func (a *TaskAdaptor) DoResponseNoWrite(c *gin.Context, resp *http.Response, inf
 	// Parse Doubao response
 	var dResp responsePayload
 	if err := common.Unmarshal(responseBody, &dResp); err != nil {
-		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+			taskErr = service.TaskErrorWrapper(errors.Wrap(err, "invalid upstream submit response"), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		} else {
+			taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -389,7 +477,11 @@ func (a *TaskAdaptor) DoResponseNoWrite(c *gin.Context, resp *http.Response, inf
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
 
-	return dResp.ID, responseBody, &channel.TaskSubmitResponse{
+	taskData = responseBody
+	if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+		taskData, _ = common.Marshal(map[string]any{"status": "queued"})
+	}
+	return dResp.ID, taskData, &channel.TaskSubmitResponse{
 		StatusCode: http.StatusOK,
 		Body:       ov,
 	}, nil
@@ -469,13 +561,28 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
+	return newDoubaoTaskInfo(
+		resTask.Status,
+		resTask.Content.VideoURL,
+		resTask.Error.Code,
+		resTask.Error.Message,
+		resTask.Usage.CompletionTokens,
+		resTask.Usage.CompletionTokens > 0,
+		resTask.Usage.TotalTokens,
+	), nil
+}
 
+func newDoubaoTaskInfo(status, videoURL, errorCode, errorMessage string, completionTokens int, completionTokensValid bool, totalTokens int) *relaycommon.TaskInfo {
 	taskResult := relaycommon.TaskInfo{
-		Code: 0,
+		Code:                  0,
+		CompletionTokens:      completionTokens,
+		CompletionTokensValid: completionTokensValid,
+		TotalTokens:           totalTokens,
+		UpstreamErrorCode:     errorCode,
 	}
 
 	// Map Doubao status to internal status
-	switch resTask.Status {
+	switch status {
 	case "pending", "queued":
 		taskResult.Status = model.TaskStatusQueued
 		taskResult.Progress = "10%"
@@ -485,21 +592,18 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "succeeded":
 		taskResult.Status = model.TaskStatusSuccess
 		taskResult.Progress = "100%"
-		taskResult.Url = resTask.Content.VideoURL
-		// 解析 usage 信息用于按倍率计费
-		taskResult.CompletionTokens = resTask.Usage.CompletionTokens
-		taskResult.TotalTokens = resTask.Usage.TotalTokens
+		taskResult.Url = videoURL
 	case "failed":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
-		taskResult.Reason = resTask.Error.Message
+		taskResult.Reason = errorMessage
 	default:
 		// Unknown status, treat as processing
 		taskResult.Status = model.TaskStatusInProgress
 		taskResult.Progress = "30%"
 	}
 
-	return &taskResult, nil
+	return &taskResult
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
@@ -513,7 +617,11 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.TaskID = originTask.TaskID
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
-	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
+	if !isSeedance25Task(originTask) {
+		openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
+	} else if originTask.Status == model.TaskStatusSuccess && strings.TrimSpace(dResp.Content.VideoURL) != "" {
+		openAIVideo.SetMetadata("url", strings.TrimSpace(dResp.Content.VideoURL))
+	}
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName

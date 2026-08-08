@@ -91,6 +91,12 @@ type TaskPrechargeEstimator interface {
 	EstimatePrechargeQuota(c *gin.Context, info *relaycommon.RelayInfo) (quota int, ok bool)
 }
 
+// TaskPriceDataValidator validates adaptor-specific billing invariants after
+// the origin-alias price has been resolved and before reservation or dispatch.
+type TaskPriceDataValidator interface {
+	ValidatePriceData(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
+}
+
 type TaskSubmitResponse struct {
 	StatusCode int
 	Body       any
