@@ -54,7 +54,8 @@ func seedance25BillingSnapshotValid(bc *model.TaskBillingContext) bool {
 type seedance25ResponseTask struct {
 	Status  string `json:"status"`
 	Content struct {
-		VideoURL string `json:"video_url"`
+		VideoURL     string `json:"video_url"`
+		LastFrameURL string `json:"last_frame_url"`
 	} `json:"content"`
 	Usage struct {
 		CompletionTokens json.RawMessage `json:"completion_tokens"`
@@ -92,6 +93,7 @@ func (a *TaskAdaptor) ParseTaskResultForTask(task *model.Task, responseBody []by
 	result := newDoubaoTaskInfo(
 		response.Status,
 		response.Content.VideoURL,
+		response.Content.LastFrameURL,
 		response.Error.Code,
 		response.Error.Message,
 		completionTokens,
@@ -173,17 +175,25 @@ func seedance25TaskTypeConstraint(code string) bool {
 	return normalized == "invalidparameter.tasktypeconstraint" || strings.Contains(normalized, "tasktypeconstraint")
 }
 
-func seedance25SafeTaskData(status string, videoURL string, completionTokens int, errorCode string, errorMessage string) ([]byte, error) {
+func seedance25SafeTaskData(status string, videoURL string, lastFrameURL string, completionTokens int, errorCode string, errorMessage string, retryable *bool) ([]byte, error) {
 	payload := map[string]any{"status": status}
 	if status == "succeeded" {
-		payload["content"] = map[string]any{"video_url": videoURL}
+		content := map[string]any{"video_url": videoURL}
+		if strings.TrimSpace(lastFrameURL) != "" {
+			content["last_frame_url"] = strings.TrimSpace(lastFrameURL)
+		}
+		payload["content"] = content
 		payload["usage"] = map[string]any{"completion_tokens": completionTokens}
 	}
 	if status == "failed" {
-		payload["error"] = map[string]any{
+		errorPayload := map[string]any{
 			"code":    errorCode,
 			"message": errorMessage,
 		}
+		if retryable != nil {
+			errorPayload["retryable"] = *retryable
+		}
+		payload["error"] = errorPayload
 	}
 	return common.Marshal(payload)
 }
@@ -207,14 +217,14 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, taskResult *relayc
 			taskResult.Progress = "100%"
 			taskResult.Url = ""
 			taskResult.Reason = "upstream success response did not contain a video output"
-			return seedance25SafeTaskData("failed", "", 0, "invalid_upstream_output", taskResult.Reason)
+			return seedance25SafeTaskData("failed", "", "", 0, "invalid_upstream_output", taskResult.Reason, nil)
 		}
 		if !taskResult.CompletionTokensValid || taskResult.CompletionTokens <= 0 {
 			taskResult.Status = model.TaskStatusFailure
 			taskResult.Progress = "100%"
 			taskResult.Url = ""
 			taskResult.Reason = "upstream success response did not contain valid completion token usage"
-			return seedance25SafeTaskData("failed", "", 0, "invalid_upstream_usage", taskResult.Reason)
+			return seedance25SafeTaskData("failed", "", "", 0, "invalid_upstream_usage", taskResult.Reason, nil)
 		}
 		if _, ok := seedance25ActualQuota(task, taskResult.CompletionTokens); !ok {
 			taskResult.Status = model.TaskStatusFailure
@@ -225,21 +235,22 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, taskResult *relayc
 			// row. Drop only the unusable billing context so the safe terminal
 			// failure and one-time reservation refund can still be persisted.
 			task.PrivateData.BillingContext = nil
-			return seedance25SafeTaskData("failed", "", 0, "invalid_billing_context", taskResult.Reason)
+			return seedance25SafeTaskData("failed", "", "", 0, "invalid_billing_context", taskResult.Reason, nil)
 		}
 		taskResult.Url = videoURL
-		return seedance25SafeTaskData("succeeded", videoURL, taskResult.CompletionTokens, "", "")
+		return seedance25SafeTaskData("succeeded", videoURL, taskResult.LastFrameURL, taskResult.CompletionTokens, "", "", nil)
 	case model.TaskStatusFailure:
 		if seedance25TaskTypeConstraint(taskResult.UpstreamErrorCode) {
 			taskResult.Reason = "request parameters are not supported for seedance-2.5"
-			return seedance25SafeTaskData("failed", "", 0, "invalid_request_error", taskResult.Reason)
+			retryable := false
+			return seedance25SafeTaskData("failed", "", "", 0, "invalid_request_error", taskResult.Reason, &retryable)
 		}
 		taskResult.Reason = "video generation failed"
-		return seedance25SafeTaskData("failed", "", 0, "video_generation_failed", taskResult.Reason)
+		return seedance25SafeTaskData("failed", "", "", 0, "video_generation_failed", taskResult.Reason, nil)
 	case model.TaskStatusSubmitted, model.TaskStatusQueued:
-		return seedance25SafeTaskData("queued", "", 0, "", "")
+		return seedance25SafeTaskData("queued", "", "", 0, "", "", nil)
 	case model.TaskStatusInProgress:
-		return seedance25SafeTaskData("processing", "", 0, "", "")
+		return seedance25SafeTaskData("processing", "", "", 0, "", "", nil)
 	default:
 		return nil, fmt.Errorf("unsupported seedance-2.5 task status")
 	}

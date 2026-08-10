@@ -23,7 +23,6 @@ func TestRelayTaskSubmitRejectsSeedance25InvalidRequestsBeforeBilling(t *testing
 		{name: "missing duration", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"resolution":"720p"}}`},
 		{name: "unsupported resolution", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"1080p"}}`},
 		{name: "disabled false field", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p","camera_fixed":false}}`},
-		{name: "reference audio", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p","content":[{"type":"audio_url","role":"reference_audio","audio_url":{"url":"https://example.invalid/a.wav"}}]}}`},
 	}
 
 	for _, tt := range tests {

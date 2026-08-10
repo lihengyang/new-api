@@ -51,6 +51,7 @@ type requestPayload struct {
 	ServiceTier           string         `json:"service_tier,omitempty"`
 	ExecutionExpiresAfter *dto.IntValue  `json:"execution_expires_after,omitempty"`
 	GenerateAudio         *dto.BoolValue `json:"generate_audio,omitempty"`
+	OutputFormat          string         `json:"output_format,omitempty"`
 	Draft                 *dto.BoolValue `json:"draft,omitempty"`
 	Tools                 []struct {
 		Type string `json:"type,omitempty"`
@@ -73,7 +74,8 @@ type responseTask struct {
 	Model   string `json:"model"`
 	Status  string `json:"status"`
 	Content struct {
-		VideoURL string `json:"video_url"`
+		VideoURL     string `json:"video_url"`
+		LastFrameURL string `json:"last_frame_url"`
 	} `json:"content"`
 	Seed            int    `json:"seed"`
 	Resolution      string `json:"resolution"`
@@ -92,8 +94,9 @@ type responseTask struct {
 		} `json:"tool_usage"`
 	} `json:"usage"`
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		Retryable *bool  `json:"retryable,omitempty"`
 	} `json:"error"`
 	CreatedAt int64 `json:"created_at"`
 	UpdatedAt int64 `json:"updated_at"`
@@ -564,6 +567,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return newDoubaoTaskInfo(
 		resTask.Status,
 		resTask.Content.VideoURL,
+		resTask.Content.LastFrameURL,
 		resTask.Error.Code,
 		resTask.Error.Message,
 		resTask.Usage.CompletionTokens,
@@ -572,13 +576,14 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	), nil
 }
 
-func newDoubaoTaskInfo(status, videoURL, errorCode, errorMessage string, completionTokens int, completionTokensValid bool, totalTokens int) *relaycommon.TaskInfo {
+func newDoubaoTaskInfo(status, videoURL, lastFrameURL, errorCode, errorMessage string, completionTokens int, completionTokensValid bool, totalTokens int) *relaycommon.TaskInfo {
 	taskResult := relaycommon.TaskInfo{
 		Code:                  0,
 		CompletionTokens:      completionTokens,
 		CompletionTokensValid: completionTokensValid,
 		TotalTokens:           totalTokens,
 		UpstreamErrorCode:     errorCode,
+		LastFrameURL:          lastFrameURL,
 	}
 
 	// Map Doubao status to internal status
@@ -622,6 +627,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	} else if originTask.Status == model.TaskStatusSuccess && strings.TrimSpace(dResp.Content.VideoURL) != "" {
 		openAIVideo.SetMetadata("url", strings.TrimSpace(dResp.Content.VideoURL))
 	}
+	if isSeedance25Task(originTask) && originTask.Status == model.TaskStatusSuccess && strings.TrimSpace(dResp.Content.LastFrameURL) != "" {
+		openAIVideo.SetMetadata("last_frame_url", strings.TrimSpace(dResp.Content.LastFrameURL))
+	}
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
@@ -635,8 +643,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 	if dResp.Status == "failed" {
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: dResp.Error.Message,
-			Code:    dResp.Error.Code,
+			Message:   dResp.Error.Message,
+			Code:      dResp.Error.Code,
+			Retryable: dResp.Error.Retryable,
 		}
 	}
 

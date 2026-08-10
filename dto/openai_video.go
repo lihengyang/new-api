@@ -54,6 +54,7 @@ type OpenAIVideoUsage struct {
 }
 
 type OpenAIVideoError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Message   string `json:"message"`
+	Code      string `json:"code"`
+	Retryable *bool  `json:"retryable,omitempty"`
 }

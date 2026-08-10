@@ -364,6 +364,46 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 	}
 }
 
+func TestSeedance25AsyncMediaFailuresReleaseReservationAndStaySanitized(t *testing.T) {
+	for _, upstreamCode := range []string{
+		"InvalidParameter.ReferenceDownloadFailed",
+		"InvalidParameter.ReferenceFormatError",
+	} {
+		t.Run(upstreamCode, func(t *testing.T) {
+			var calls atomic.Int32
+			server := newSeedance25PollingServer(t,
+				`{"status":"failed","error":{"code":"`+upstreamCode+`","message":"raw signed URL https://example.invalid/private?signature=secret"}}`,
+				&calls,
+			)
+			defer server.Close()
+			const reservation = 600
+			fixture := seedSeedance25PollingIntegrationFixture(t, server.URL, reservation)
+			adaptor := &taskdoubao.TaskAdaptor{}
+			taskMap := map[string]*model.Task{fixture.upstreamID: fixture.task}
+
+			require.NoError(t, service.UpdateVideoSingleTaskForTest(context.Background(), adaptor, fixture.channel, fixture.upstreamID, taskMap))
+			require.EqualValues(t, 1, calls.Load())
+			userQuota, tokenRemain, tokenUsed := seedance25IntegrationQuotaState(t, fixture)
+			require.Equal(t, seedance25IntegrationBalance, userQuota)
+			require.Equal(t, seedance25IntegrationBalance, tokenRemain)
+			require.Zero(t, tokenUsed)
+
+			var reloaded model.Task
+			require.NoError(t, model.DB.First(&reloaded, fixture.task.ID).Error)
+			require.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+			require.Contains(t, string(reloaded.Data), `"code":"video_generation_failed"`)
+			require.NotContains(t, string(reloaded.Data), upstreamCode)
+			require.NotContains(t, string(reloaded.Data), "signature=secret")
+			require.NotContains(t, reloaded.FailReason, "signature=secret")
+			logs := seedance25IntegrationLogs(t, fixture.userID)
+			require.Len(t, logs, 1)
+			require.Equal(t, model.LogTypeRefund, logs[0].Type)
+			require.Equal(t, reservation, logs[0].Quota)
+			require.NotContains(t, logs[0].Content+logs[0].Other, "signature=secret")
+		})
+	}
+}
+
 func TestSeedance25RealDoubaoPollingCASLoserDoesNotRepeatFinancialAction(t *testing.T) {
 	var calls atomic.Int32
 	server := newSeedance25PollingServer(t, `{"status":"succeeded","content":{"video_url":"https://example.invalid/loser-output.mp4"},"usage":{"completion_tokens":100}}`, &calls)

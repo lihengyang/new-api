@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
@@ -82,7 +83,9 @@ func TestResolveSeedance25BillingVideoAndNoVideoRatios(t *testing.T) {
 	}{
 		{name: "text only", metadata: map[string]any{"resolution": "720p", "duration": 4}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1},
 		{name: "reference image", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25Image("reference_image")}}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1},
+		{name: "reference audio", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25AudioURL("https://example.invalid/reference.wav")}}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1},
 		{name: "reference video", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25Video("reference_video")}}, inputType: seedanceBillingInputVideo, expectedRatio: 64.0 / 107.0},
+		{name: "mixed references with video", metadata: map[string]any{"resolution": "720p", "duration": -1, "content": []any{seedance25Image("reference_image"), seedance25AudioURL("https://example.invalid/reference.wav"), seedance25Video("reference_video")}}, inputType: seedanceBillingInputVideo, expectedRatio: 64.0 / 107.0},
 	}
 
 	for _, tt := range tests {
@@ -207,8 +210,10 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 		{name: "480p four seconds rounds up", resolution: "480p", duration: 4, expectedTokens: 40176, expectedQuota: 214942},
 		{name: "720p four seconds", resolution: "720p", duration: 4, expectedTokens: 86945, expectedQuota: 465156},
 		{name: "720p thirty seconds", resolution: "720p", duration: 30, expectedTokens: 652084, expectedQuota: 3488650},
+		{name: "720p automatic duration reserves thirty seconds", resolution: "720p", duration: -1, expectedTokens: 652084, expectedQuota: 3488650},
 		{name: "720p video reserves thirty second input", resolution: "720p", duration: 4, video: true, expectedTokens: 739029, expectedQuota: 2364893},
 		{name: "720p video plus thirty second output", resolution: "720p", duration: 30, video: true, expectedTokens: 1304168, expectedQuota: 4173338},
+		{name: "720p video automatic duration uses both maximums", resolution: "720p", duration: -1, video: true, expectedTokens: 1304168, expectedQuota: 4173338},
 	}
 
 	for _, tt := range tests {
@@ -241,7 +246,8 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 			if tt.video {
 				inputDuration = seedance25MaxDurationSeconds
 			}
-			estimatedTokens := int(math.Ceil(float64(inputDuration+tt.duration) * float64(maxPixels) * seedance25ReservationFPS / 1024))
+			outputDuration := normalizeSeedanceDuration(tt.duration, seedance25MaxDurationSeconds)
+			estimatedTokens := int(math.Ceil(float64(inputDuration+outputDuration) * float64(maxPixels) * seedance25ReservationFPS / 1024))
 			require.Equal(t, tt.expectedTokens, estimatedTokens)
 			quota, ok := adaptor.EstimatePrechargeQuota(c, info)
 			require.True(t, ok)
@@ -480,7 +486,7 @@ func TestSeedance25TerminalSuccessPersistsOnlyCompletionTokenUsage(t *testing.T)
 		"id":"provider_task_marker",
 		"model":"provider_model_marker",
 		"status":"succeeded",
-		"content":{"video_url":"https://example.invalid/result.mp4"},
+		"content":{"video_url":"https://example.invalid/result.mp4","last_frame_url":"https://example.invalid/last-frame.png"},
 		"usage":{"completion_tokens":100,"total_tokens":999}
 	}`
 	adaptor := &TaskAdaptor{}
@@ -489,6 +495,7 @@ func TestSeedance25TerminalSuccessPersistsOnlyCompletionTokenUsage(t *testing.T)
 	require.True(t, result.CompletionTokensValid)
 	require.Equal(t, 100, result.CompletionTokens)
 	require.Equal(t, 999, result.TotalTokens)
+	require.Equal(t, "https://example.invalid/last-frame.png", result.LastFrameURL)
 
 	task := seedance25TerminalTask(false)
 	persisted, err := adaptor.ApplyTaskResultPolicy(task, result, []byte(responseBody))
@@ -496,6 +503,7 @@ func TestSeedance25TerminalSuccessPersistsOnlyCompletionTokenUsage(t *testing.T)
 	require.EqualValues(t, model.TaskStatusSuccess, result.Status)
 	require.Equal(t, 535, adaptor.AdjustBillingOnComplete(task, result))
 	require.Contains(t, string(persisted), `"completion_tokens":100`)
+	require.Contains(t, string(persisted), `"last_frame_url":"https://example.invalid/last-frame.png"`)
 	require.NotContains(t, string(persisted), "total_tokens")
 	require.NotContains(t, string(persisted), "provider_task_marker")
 	require.NotContains(t, string(persisted), "provider_model_marker")
@@ -584,10 +592,43 @@ func TestSeedance25TaskTypeConstraintIsSanitizedAndNonRetryable(t *testing.T) {
 	require.EqualValues(t, model.TaskStatusFailure, result.Status)
 	require.Equal(t, "request parameters are not supported for seedance-2.5", result.Reason)
 	require.Contains(t, string(persisted), `"code":"invalid_request_error"`)
+	require.Contains(t, string(persisted), `"retryable":false`)
 	require.NotContains(t, string(persisted), "InvalidParameter.TaskTypeConstraint")
 	require.NotContains(t, string(persisted), "internal-project-marker")
 	require.NotContains(t, string(persisted), "provider_task_marker")
 	require.NotContains(t, string(persisted), "provider_model_marker")
+
+	task := seedance25TerminalTask(false)
+	task.Status = model.TaskStatusFailure
+	task.Data = persisted
+	publicBody, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var publicVideo dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(publicBody, &publicVideo))
+	require.NotNil(t, publicVideo.Error)
+	require.NotNil(t, publicVideo.Error.Retryable)
+	require.False(t, *publicVideo.Error.Retryable)
+}
+
+func TestSeedance25CompletedGETIncludesOnlyReturnedLastFrameURL(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	withLastFrame := seedance25TerminalTask(false)
+	withLastFrame.Status = model.TaskStatusSuccess
+	withLastFrame.Data = []byte(`{"status":"succeeded","content":{"video_url":"https://example.invalid/result.mp4","last_frame_url":"https://example.invalid/last-frame.png"},"usage":{"completion_tokens":100}}`)
+	body, err := adaptor.ConvertToOpenAIVideo(withLastFrame)
+	require.NoError(t, err)
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(body, &video))
+	require.Equal(t, "https://example.invalid/last-frame.png", video.Metadata["last_frame_url"])
+
+	withoutLastFrame := seedance25TerminalTask(false)
+	withoutLastFrame.Status = model.TaskStatusSuccess
+	withoutLastFrame.Data = []byte(`{"status":"succeeded","content":{"video_url":"https://example.invalid/result.mp4"},"usage":{"completion_tokens":100}}`)
+	body, err = adaptor.ConvertToOpenAIVideo(withoutLastFrame)
+	require.NoError(t, err)
+	video = dto.OpenAIVideo{}
+	require.NoError(t, common.Unmarshal(body, &video))
+	require.NotContains(t, video.Metadata, "last_frame_url")
 }
 
 func TestSeedance25TaskTypeConstraintWithoutStatusStillTerminatesSafely(t *testing.T) {

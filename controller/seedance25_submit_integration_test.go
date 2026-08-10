@@ -173,6 +173,14 @@ func seedance25SubmitVideo(role string) map[string]any {
 	}
 }
 
+func seedance25SubmitAudio(role string) map[string]any {
+	return map[string]any{
+		"type":      "audio_url",
+		"role":      role,
+		"audio_url": map[string]any{"url": "https://example.invalid/placeholder.wav"},
+	}
+}
+
 func decodeSeedance25SubmitPayload(t *testing.T, body []byte) map[string]any {
 	t.Helper()
 	var payload map[string]any
@@ -225,6 +233,19 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			metadata:      map[string]any{"duration": 30, "resolution": "720p", "ratio": "adaptive", "content": []any{seedance25SubmitVideo("reference_video")}, "generate_audio": false},
 			expectedRoles: []string{"reference_video"}, expectedRatio: "adaptive", expectedNumerator: 64, expectedDenominator: 107,
 		},
+		{
+			name: "mixed editing references with p1 output controls",
+			metadata: map[string]any{
+				"duration": -1, "resolution": "720p", "ratio": "adaptive",
+				"content": []any{
+					seedance25SubmitImage("reference_image"),
+					seedance25SubmitVideo("reference_video"),
+					seedance25SubmitAudio("reference_audio"),
+				},
+				"generate_audio": false, "output_format": "mov", "return_last_frame": true, "watermark": false,
+			},
+			expectedRoles: []string{"reference_image", "reference_video", "reference_audio"}, expectedRatio: "adaptive", expectedNumerator: 64, expectedDenominator: 107,
+		},
 	}
 
 	for _, tt := range tests {
@@ -255,13 +276,20 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			require.NotEqual(t, seedance25TenantAliasForTest, payload["model"])
 			require.Equal(t, false, payload["generate_audio"])
 			require.Equal(t, tt.expectedRatio, payload["ratio"])
+			require.Equal(t, float64(tt.metadata["duration"].(int)), payload["duration"])
 			require.NotContains(t, payload, "seed")
 			require.NotContains(t, payload, "camera_fixed")
 			require.NotContains(t, payload, "frames")
 			require.NotContains(t, payload, "draft")
 			require.NotContains(t, payload, "service_tier")
-			require.NotContains(t, payload, "output_format")
-			require.NotContains(t, payload, "return_last_frame")
+			for _, field := range []string{"output_format", "return_last_frame", "watermark"} {
+				expected, present := tt.metadata[field]
+				if present {
+					require.Equal(t, expected, payload[field])
+				} else {
+					require.NotContains(t, payload, field)
+				}
+			}
 			require.NotContains(t, payload, "priority")
 
 			content, ok := payload["content"].([]any)

@@ -765,6 +765,7 @@ type TaskInfo struct {
 	CompletionTokensValid bool   `json:"-"`
 	TotalTokens           int    `json:"total_tokens,omitempty"` // 用于旧模型按倍率计费
 	UpstreamErrorCode     string `json:"-"`
+	LastFrameURL          string `json:"last_frame_url,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

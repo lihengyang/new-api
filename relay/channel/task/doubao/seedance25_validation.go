@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -21,6 +22,13 @@ const (
 	seedance25InputFirstLastFrame = "first_last_frame"
 	seedance25InputReferenceImage = "reference_image"
 	seedance25InputReferenceVideo = "reference_video"
+	seedance25InputReferenceAudio = "reference_audio"
+	seedance25InputReference      = "reference"
+
+	seedance25MaxReferenceImages = 30
+	seedance25MaxReferenceVideos = 10
+	seedance25MaxReferenceAudios = 10
+	seedance25MaxReferenceTotal  = 50
 )
 
 var seedance25AllowedRootFields = map[string]struct{}{
@@ -34,8 +42,11 @@ var seedance25AllowedMetadataFields = map[string]struct{}{
 	"content":           {},
 	"duration":          {},
 	"generate_audio":    {},
+	"output_format":     {},
 	"ratio":             {},
 	"resolution":        {},
+	"return_last_frame": {},
+	"watermark":         {},
 }
 
 var seedance25ForbiddenFields = map[string]struct{}{
@@ -47,12 +58,10 @@ var seedance25ForbiddenFields = map[string]struct{}{
 	"draft":                   {},
 	"execution_expires_after": {},
 	"frames":                  {},
-	"output_format":           {},
 	"priority":                {},
 	"queue":                   {},
 	"queue_id":                {},
 	"queue_priority":          {},
-	"return_last_frame":       {},
 	"seed":                    {},
 	"service_tier":            {},
 }
@@ -129,9 +138,28 @@ func validateSeedance25MediaURL(raw json.RawMessage, field string) error {
 	if !ok {
 		return fmt.Errorf("%s.url is required", field)
 	}
-	var url string
-	if err := common.Unmarshal(rawURL, &url); err != nil || strings.TrimSpace(url) == "" {
+	var mediaURL string
+	if err := common.Unmarshal(rawURL, &mediaURL); err != nil || strings.TrimSpace(mediaURL) == "" {
 		return fmt.Errorf("%s.url must be a non-empty string", field)
+	}
+	if mediaURL != strings.TrimSpace(mediaURL) {
+		return fmt.Errorf("%s.url must not include surrounding whitespace", field)
+	}
+	parsed, err := url.Parse(mediaURL)
+	if err != nil {
+		return fmt.Errorf("%s.url must use https:// or asset://", field)
+	}
+	switch parsed.Scheme {
+	case "https":
+		if parsed.Hostname() == "" || parsed.User != nil {
+			return fmt.Errorf("%s.url must be a valid HTTPS URL without credentials", field)
+		}
+	case "asset":
+		if !strings.HasPrefix(mediaURL, "asset://") || (parsed.Host == "" && strings.TrimPrefix(mediaURL, "asset://") == "") {
+			return fmt.Errorf("%s.url must be a valid asset:// reference", field)
+		}
+	default:
+		return fmt.Errorf("%s.url must use https:// or asset://", field)
 	}
 	return nil
 }
@@ -150,8 +178,8 @@ func validateSeedance25Content(raw json.RawMessage) (string, error) {
 	if len(items) == 0 {
 		return "", fmt.Errorf("content must be omitted for text-only requests")
 	}
-	if len(items) > 2 {
-		return "", fmt.Errorf("content exceeds the Seedance 2.5 P0 material limit")
+	if len(items) > seedance25MaxReferenceTotal {
+		return "", fmt.Errorf("content supports at most %d reference materials", seedance25MaxReferenceTotal)
 	}
 
 	roleCount := make(map[string]int)
@@ -188,7 +216,13 @@ func validateSeedance25Content(raw json.RawMessage) (string, error) {
 				return "", err
 			}
 		case "audio_url":
-			return "", fmt.Errorf("reference audio is outside Seedance 2.5 P0")
+			allowedFields["audio_url"] = struct{}{}
+			if role != seedance25InputReferenceAudio {
+				return "", fmt.Errorf("audio_url role must be reference_audio")
+			}
+			if err := validateSeedance25MediaURL(item["audio_url"], "audio_url"); err != nil {
+				return "", err
+			}
 		default:
 			return "", fmt.Errorf("content type %q is not supported", mediaType)
 		}
@@ -198,20 +232,30 @@ func validateSeedance25Content(raw json.RawMessage) (string, error) {
 		roleCount[role]++
 	}
 
-	for role, count := range roleCount {
-		if count != 1 {
-			return "", fmt.Errorf("content role %q must appear exactly once", role)
-		}
+	if roleCount[seedance25InputFirstFrame] > 1 || roleCount["last_frame"] > 1 {
+		return "", fmt.Errorf("first_frame and last_frame may each appear at most once")
+	}
+	if roleCount[seedance25InputReferenceImage] > seedance25MaxReferenceImages {
+		return "", fmt.Errorf("content supports at most %d reference_image items", seedance25MaxReferenceImages)
+	}
+	if roleCount[seedance25InputReferenceVideo] > seedance25MaxReferenceVideos {
+		return "", fmt.Errorf("content supports at most %d reference_video items", seedance25MaxReferenceVideos)
+	}
+	if roleCount[seedance25InputReferenceAudio] > seedance25MaxReferenceAudios {
+		return "", fmt.Errorf("content supports at most %d reference_audio items", seedance25MaxReferenceAudios)
+	}
+	hasFrameMode := roleCount[seedance25InputFirstFrame]+roleCount["last_frame"] > 0
+	referenceCount := roleCount[seedance25InputReferenceImage] + roleCount[seedance25InputReferenceVideo] + roleCount[seedance25InputReferenceAudio]
+	if hasFrameMode && referenceCount > 0 {
+		return "", fmt.Errorf("first/last-frame and reference modes cannot be mixed")
 	}
 	switch {
 	case len(items) == 1 && roleCount[seedance25InputFirstFrame] == 1:
 		return seedance25InputFirstFrame, nil
 	case len(items) == 2 && roleCount[seedance25InputFirstFrame] == 1 && roleCount["last_frame"] == 1:
 		return seedance25InputFirstLastFrame, nil
-	case len(items) == 1 && roleCount[seedance25InputReferenceImage] == 1:
-		return seedance25InputReferenceImage, nil
-	case len(items) == 1 && roleCount[seedance25InputReferenceVideo] == 1:
-		return seedance25InputReferenceVideo, nil
+	case referenceCount == len(items):
+		return seedance25InputReference, nil
 	default:
 		return "", fmt.Errorf("first/last-frame and reference modes cannot be mixed")
 	}
@@ -255,11 +299,11 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 
 	rawDuration, ok := metadata["duration"]
 	if !ok || len(rawDuration) == 0 || rawJSONIsNull(rawDuration) {
-		return seedance25InvalidRequest("metadata.duration is required and must be an integer from 4 to 30")
+		return seedance25InvalidRequest("metadata.duration is required and must be -1 or an integer from 4 to 30")
 	}
 	var duration int
-	if err := common.Unmarshal(rawDuration, &duration); err != nil || duration < 4 || duration > 30 {
-		return seedance25InvalidRequest("metadata.duration must be an integer from 4 to 30")
+	if err := common.Unmarshal(rawDuration, &duration); err != nil || (duration != -1 && (duration < 4 || duration > 30)) {
+		return seedance25InvalidRequest("metadata.duration must be -1 or an integer from 4 to 30")
 	}
 
 	resolution := "720p"
@@ -276,6 +320,24 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 			return seedance25InvalidRequest("metadata.generate_audio must be true or false")
 		}
 		req.Metadata["generate_audio"] = generateAudio
+	}
+
+	if rawOutputFormat, ok := metadata["output_format"]; ok {
+		var outputFormat string
+		if rawJSONIsNull(rawOutputFormat) || common.Unmarshal(rawOutputFormat, &outputFormat) != nil ||
+			(outputFormat != "mp4" && outputFormat != "mov") {
+			return seedance25InvalidRequest("metadata.output_format must be mp4 or mov")
+		}
+		req.Metadata["output_format"] = outputFormat
+	}
+	for _, field := range []string{"return_last_frame", "watermark"} {
+		if rawValue, ok := metadata[field]; ok {
+			var value bool
+			if rawJSONIsNull(rawValue) || common.Unmarshal(rawValue, &value) != nil {
+				return seedance25InvalidRequest(fmt.Sprintf("metadata.%s must be true or false", field))
+			}
+			req.Metadata[field] = value
+		}
 	}
 
 	inputMode, err := validateSeedance25Content(metadata["content"])

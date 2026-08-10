@@ -58,18 +58,34 @@ func validSeedance25Metadata() map[string]any {
 }
 
 func seedance25Image(role string) map[string]any {
+	return seedance25ImageURL(role, "https://example.invalid/reference.png")
+}
+
+func seedance25ImageURL(role string, referenceURL string) map[string]any {
 	return map[string]any{
 		"type":      "image_url",
 		"role":      role,
-		"image_url": map[string]any{"url": "https://example.invalid/reference.png"},
+		"image_url": map[string]any{"url": referenceURL},
 	}
 }
 
 func seedance25Video(role string) map[string]any {
+	return seedance25VideoURL(role, "https://example.invalid/reference.mp4")
+}
+
+func seedance25VideoURL(role string, referenceURL string) map[string]any {
 	return map[string]any{
 		"type":      "video_url",
 		"role":      role,
-		"video_url": map[string]any{"url": "https://example.invalid/reference.mp4"},
+		"video_url": map[string]any{"url": referenceURL},
+	}
+}
+
+func seedance25AudioURL(referenceURL string) map[string]any {
+	return map[string]any{
+		"type":      "audio_url",
+		"role":      "reference_audio",
+		"audio_url": map[string]any{"url": referenceURL},
 	}
 }
 
@@ -137,7 +153,7 @@ func TestValidateSeedance25Resolution(t *testing.T) {
 }
 
 func TestValidateSeedance25DurationStrictJSONInteger(t *testing.T) {
-	for _, duration := range []int{4, 30} {
+	for _, duration := range []int{-1, 4, 30} {
 		t.Run("accept_boundary", func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["duration"] = duration
@@ -153,7 +169,6 @@ func TestValidateSeedance25DurationStrictJSONInteger(t *testing.T) {
 		"float":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":4.0,"resolution":"720p"} }`,
 		"three":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":3,"resolution":"720p"} }`,
 		"thirty1": `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":31,"resolution":"720p"} }`,
-		"smart":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":-1,"resolution":"720p"} }`,
 	}
 	for name, body := range invalidBodies {
 		t.Run(name, func(t *testing.T) {
@@ -175,6 +190,8 @@ func TestValidateSeedance25SupportedInputModes(t *testing.T) {
 		{name: "first and last", content: []any{seedance25Image("first_frame"), seedance25Image("last_frame")}, expectedDefault: "adaptive"},
 		{name: "single reference image", content: []any{seedance25Image("reference_image")}, ratio: "16:9"},
 		{name: "single reference video", content: []any{seedance25Video("reference_video")}, ratio: "adaptive"},
+		{name: "pure reference audio", content: []any{seedance25AudioURL("asset://audio/reference-one")}, ratio: "adaptive"},
+		{name: "mixed references", content: []any{seedance25Image("reference_image"), seedance25Video("reference_video"), seedance25AudioURL("https://example.invalid/reference.wav")}, ratio: "adaptive"},
 	}
 
 	for _, tt := range tests {
@@ -206,13 +223,11 @@ func TestValidateSeedance25RejectsInvalidInputCombinations(t *testing.T) {
 		{name: "empty content", content: []any{}},
 		{name: "last frame only", content: []any{seedance25Image("last_frame")}},
 		{name: "duplicate first role", content: []any{seedance25Image("first_frame"), seedance25Image("first_frame")}},
-		{name: "multiple reference images", content: []any{seedance25Image("reference_image"), seedance25Image("reference_image")}},
-		{name: "multiple reference videos", content: []any{seedance25Video("reference_video"), seedance25Video("reference_video")}},
 		{name: "mixed first and reference", content: []any{seedance25Image("first_frame"), seedance25Video("reference_video")}},
 		{name: "reference image video role", content: []any{seedance25Image("reference_video")}},
 		{name: "reference video image role", content: []any{seedance25Video("reference_image")}},
 		{name: "missing role", content: []any{map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.invalid/a.png"}}}},
-		{name: "audio outside p0", content: []any{map[string]any{"type": "audio_url", "role": "reference_audio", "audio_url": map[string]any{"url": "https://example.invalid/a.wav"}}}},
+		{name: "wrong audio role", content: []any{map[string]any{"type": "audio_url", "role": "reference_video", "audio_url": map[string]any{"url": "https://example.invalid/a.wav"}}}},
 		{name: "first fixed ratio", content: []any{seedance25Image("first_frame")}, ratio: "16:9"},
 		{name: "unsupported reference ratio", content: []any{seedance25Image("reference_image")}, ratio: "9:16"},
 	}
@@ -261,14 +276,12 @@ func TestValidateSeedance25RejectsEveryDisabledFieldByPresence(t *testing.T) {
 
 func TestValidateSeedance25RejectsCanonicalDisabledValuesAndProjectOverride(t *testing.T) {
 	tests := map[string]any{
-		"camera_fixed":      false,
-		"draft":             false,
-		"frames":            0,
-		"output_format":     "mov",
-		"priority":          0,
-		"return_last_frame": false,
-		"seed":              0,
-		"service_tier":      "flex",
+		"camera_fixed": false,
+		"draft":        false,
+		"frames":       0,
+		"priority":     0,
+		"seed":         0,
+		"service_tier": "flex",
 	}
 	for field, value := range tests {
 		t.Run(field, func(t *testing.T) {
@@ -292,6 +305,121 @@ func TestValidateSeedance25RejectsCanonicalDisabledValuesAndProjectOverride(t *t
 			_, _, err = validateSeedance25Body(t, body, seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
+	}
+}
+
+func TestValidateSeedance25ReferenceCountBoundaries(t *testing.T) {
+	materials := func(images, videos, audios int) []any {
+		items := make([]any, 0, images+videos+audios)
+		for i := 0; i < images; i++ {
+			items = append(items, seedance25ImageURL("reference_image", fmt.Sprintf("https://example.invalid/image-%02d.png", i)))
+		}
+		for i := 0; i < videos; i++ {
+			items = append(items, seedance25VideoURL("reference_video", fmt.Sprintf("https://example.invalid/video-%02d.mp4", i)))
+		}
+		for i := 0; i < audios; i++ {
+			items = append(items, seedance25AudioURL(fmt.Sprintf("https://example.invalid/audio-%02d.wav", i)))
+		}
+		return items
+	}
+
+	tests := []struct {
+		name    string
+		content []any
+		valid   bool
+	}{
+		{name: "30 images", content: materials(30, 0, 0), valid: true},
+		{name: "31 images", content: materials(31, 0, 0)},
+		{name: "10 videos", content: materials(0, 10, 0), valid: true},
+		{name: "11 videos", content: materials(0, 11, 0)},
+		{name: "10 audios", content: materials(0, 0, 10), valid: true},
+		{name: "11 audios", content: materials(0, 0, 11)},
+		{name: "50 mixed materials", content: materials(30, 10, 10), valid: true},
+		{name: "51 materials", content: materials(31, 10, 10)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := validSeedance25Metadata()
+			metadata["content"] = tt.content
+			_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+			if tt.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestSeedance25ReferenceOrderAndP1ParametersReachUpstreamUnchanged(t *testing.T) {
+	content := []any{
+		seedance25ImageURL("reference_image", "https://example.invalid/shared-reference"),
+		seedance25VideoURL("reference_video", "https://example.invalid/video-one.mp4"),
+		seedance25AudioURL("asset://audio/reference-one"),
+		seedance25ImageURL("reference_image", "https://example.invalid/shared-reference"),
+		seedance25AudioURL("https://example.invalid/audio-two.wav"),
+	}
+	metadata := map[string]any{
+		"duration":          -1,
+		"resolution":        "720p",
+		"ratio":             "adaptive",
+		"content":           content,
+		"output_format":     "mov",
+		"return_last_frame": false,
+		"watermark":         true,
+	}
+	c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+	require.NoError(t, err)
+	info.ChannelMeta = &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "mapped-provider-model"}
+	reader, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	body, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, float64(-1), payload["duration"])
+	require.Equal(t, "mov", payload["output_format"])
+	require.Equal(t, false, payload["return_last_frame"])
+	require.Equal(t, true, payload["watermark"])
+
+	upstreamContent := payload["content"].([]any)
+	require.Len(t, upstreamContent, len(content)+1)
+	for i, expected := range content {
+		expectedItem := expected.(map[string]any)
+		actualItem := upstreamContent[i].(map[string]any)
+		require.Equal(t, expectedItem["type"], actualItem["type"])
+		require.Equal(t, expectedItem["role"], actualItem["role"])
+		mediaField := strings.TrimSuffix(expectedItem["type"].(string), "_url") + "_url"
+		require.Equal(t, expectedItem[mediaField], actualItem[mediaField])
+	}
+	require.Equal(t, "text", upstreamContent[len(content)].(map[string]any)["type"])
+}
+
+func TestValidateSeedance25P1ParameterTypesAndMediaSchemes(t *testing.T) {
+	for _, outputFormat := range []string{"mp4", "mov"} {
+		metadata := validSeedance25Metadata()
+		metadata["output_format"] = outputFormat
+		_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.NoError(t, err)
+	}
+	for _, field := range []string{"return_last_frame", "watermark"} {
+		metadata := validSeedance25Metadata()
+		metadata[field] = "false"
+		_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.Error(t, err)
+	}
+	for _, outputFormat := range []any{"MP4", "avi", false, nil} {
+		metadata := validSeedance25Metadata()
+		metadata["output_format"] = outputFormat
+		_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.Error(t, err)
+	}
+	for _, referenceURL := range []string{"http://example.invalid/a.png", "data:image/png;base64,AAAA", "file:///tmp/a.png", "https://user:pass@example.invalid/a.png"} {
+		metadata := validSeedance25Metadata()
+		metadata["content"] = []any{seedance25ImageURL("reference_image", referenceURL)}
+		_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.Error(t, err)
 	}
 }
 
