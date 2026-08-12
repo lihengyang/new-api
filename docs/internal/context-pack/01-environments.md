@@ -1,20 +1,20 @@
 # Environments
 
-Current verified release facts as of the 2026-07-04 Seed Audio parser hotfix
-production closeout:
+Current verified release facts as of the 2026-08-12 MediaKit Video Enhancement
+P0 production closeout:
 
 - Production container: `new-api-nightly`
 - Production current image:
-  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
-- Production current image ID prefix: `dda5be8c7020`
+  `new-api:mediakit-parser-status-fix-968670a1`
+- Production current image ID prefix: `c7521715e0ef`
 - Production source revision:
-  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
+  `968670a13306d9ea57497aa48ff022a732c2112e`
 - Previous production image:
-  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
+  `new-api:seedance-2.5-p1-candidate-51bdea54`
 - Previous production revision:
-  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
+  `51bdea5468ca7be213c02bbc540e6cde1ce993b4`
 - Retained rollback container:
-  `new-api-nightly-before-seed-audio-parser-hotfix-rc1-20260704T173731Z`
+  `new-api-nightly-before-mediakit-p0-20260812T115829Z`
 - Production DB: MySQL 8.0.43-34
 - Production DB name: `lsf_newapi_prod`
 - Production DB fingerprint: `1e7c66a33168567c`
@@ -24,9 +24,15 @@ production closeout:
 - Preflight DB name: `lsf_newapi_preflight`
 - Preflight DB fingerprint: `e2546ab4e0b7a4a5`
 - Production and preflight DB targets are different.
-- Production rollout health checks passed through `/api/status` after the Seed
-  Audio parser hotfix deployment.
+- Production rollout health checks passed through `/api/status` after the
+  MediaKit P0 deployment.
 - Production container restart count was `0` at closeout.
+- MediaKit production Standard 1080p smoke passed with one POST, actual profile
+  `10s / 30fps / 1080p / standard`, exact billing reconciliation, and two
+  repeated GETs with unchanged balance and billing records.
+- Production/preflight required MediaKit configuration shapes matched without a
+  ProjectName requirement. No Channel, token, group, mapping, environment, or
+  database configuration was changed during validation.
 - Production `seed_audio_idempotencies.error_diagnostics` exists as nullable
   `TEXT`.
 - Production `seed_audio_idempotencies.x_tt_logid` exists and was populated for

@@ -42,13 +42,14 @@ sanitized operational evidence that must not be copied into customer docs.
 ## MediaKit Video Enhancement P0
 
 - Record: `2026-08-12-mediakit-video-enhancement-p0-preflight.md`
-- Final status: `PREFLIGHT_VALIDATED / PRODUCTION_NOT_APPROVED`
-- Preflight source / OCI revision:
+- Final status: `PRODUCTION_VALIDATED / P0_COMPLETE`
+- Production source / OCI revision:
   `968670a13306d9ea57497aa48ff022a732c2112e`
 - Scope: BytePlus AI MediaKit Standard 1080p creation, terminal synchronization,
-  actual-media billing reconciliation, and repeated-GET idempotency.
-- Customer documentation was not changed. Production remains a separate Henry
-  approval gate.
+  actual-media billing reconciliation, repeated-GET idempotency, and the
+  production rollout.
+- Customer documentation was not changed. Details preview, sanitized upstream
+  error detail, and the six known unrelated baseline test failures are P1.
 
 ## Documentation Guardrails
 

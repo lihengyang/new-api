@@ -2,27 +2,29 @@
 
 Product: Light Speed Future Seedance 2.0 API proxy based on customized new-api nightly.
 
-Current production release status as of the 2026-07-04 Seed Audio parser
-hotfix production closeout:
+Current production release status as of the 2026-08-12 MediaKit Video
+Enhancement P0 production closeout:
 
-- Status: `PRODUCTION_DEPLOY_PASSED / SEED_AUDIO_PARSER_HOTFIX_RC1`
+- Status: `MEDIAKIT_P0_PRODUCTION_PASS / P0_COMPLETE`
 - Production container: `new-api-nightly`
 - Current production image:
-  `new-api:seed-audio-parser-hotfix-rc1-dcda4e55`
-- Current production image ID prefix: `dda5be8c7020`
+  `new-api:mediakit-parser-status-fix-968670a1`
+- Current production image ID prefix: `c7521715e0ef`
 - Current code / OCI revision:
-  `dcda4e551e50051ab536173f342eb21f0ca60e8d`
+  `968670a13306d9ea57497aa48ff022a732c2112e`
 - Previous production image:
-  `new-api:seed-audio-p01-reliability-admin-ui-rc1-fa002bfc`
+  `new-api:seedance-2.5-p1-candidate-51bdea54`
 - Previous production revision:
-  `fa002bfc3e3a99e469f9332e2e1efce48757ba44`
+  `51bdea5468ca7be213c02bbc540e6cde1ce993b4`
 - Preserved rollback container:
-  `new-api-nightly-before-seed-audio-parser-hotfix-rc1-20260704T173731Z`
+  `new-api-nightly-before-mediakit-p0-20260812T115829Z`
 
-The Seed Audio parser hotfix production deployment used the preflight-validated
-artifact built from the recorded source revision. The
-rollback artifact must remain available through the observation window unless
-Henry explicitly retires it.
+The MediaKit P0 production deployment used the exact preflight-validated image
+without rebuilding or migration. Production Standard 1080p smoke passed with
+one POST, terminal actual-media billing reconciliation, two idempotent repeated
+GETs, transient output URL handling, and no sensitive-data leakage. The rollback
+artifact must remain available through the observation window unless Henry
+explicitly retires it.
 
 Production domain:
 
@@ -38,6 +40,19 @@ Supported customer video endpoints:
 Supported P1 customer endpoint:
 
 - `GET /v1/billing/balance`
+
+MediaKit Video Enhancement P0 status:
+
+- Status: `PRODUCTION_VALIDATED / STANDARD_1080P_SMOKE_PASSED`
+- Internal tenant alias maps to the canonical MediaKit video-enhancement model.
+- MediaKit uses an API key in the Bearer authorization header; `ProjectName` is
+  not a MediaKit configuration or request requirement.
+- Successful production profile: `10s / 30fps / 1080p / standard`.
+- Highest-FPS-tier precharge, actual-media settlement, differential refund, and
+  repeated-GET billing idempotency passed.
+- Output URLs remain transient and are not persisted.
+- P1: interactive Details preview, sanitized upstream error detail, and closure
+  of all six known unrelated baseline test failures.
 
 Seed Audio P0 customer release status:
 
