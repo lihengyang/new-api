@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -24,6 +25,7 @@ func TestMediaKitSubmitPrechargesBeforeSingleUpstreamPostAndPersistsSnapshot(t *
 		"metadata": map[string]any{
 			"video_url":    "https://media.example.invalid/source.mp4?signature=input-secret",
 			"tool_version": "professional", "resolution": "4k", "duration": 1.01,
+			"client_request_id": "mediakit-submit-test",
 		},
 	})
 	require.NoError(t, err)
@@ -65,8 +67,10 @@ func TestMediaKitSubmitPrechargesBeforeSingleUpstreamPostAndPersistsSnapshot(t *
 	require.NoError(t, common.Unmarshal(forwarded, &payload))
 	require.Equal(t, "professional", payload["tool_version"])
 	require.Equal(t, "4k", payload["resolution"])
+	require.Equal(t, "mediakit-submit-test", payload["client_token"])
 	require.NotContains(t, payload, "duration")
 	require.NotContains(t, payload, "client_request_id")
+	require.NotContains(t, payload, "metadata")
 	require.NotContains(t, payload, "ProjectName")
 
 	var task model.Task
@@ -119,4 +123,52 @@ func TestMediaKitChannelErrorLogOmitsChannelGroupAndSensitiveValues(t *testing.T
 	require.NotContains(t, log.Other, "private-tenant-group")
 	require.NotContains(t, log.Other, "placeholder-key")
 	require.NotContains(t, log.Other, `"channel_id"`)
+}
+
+func TestMediaKitInvalidClientTokenRejectedBeforeBillingAndUpstream(t *testing.T) {
+	tests := []struct {
+		name            string
+		clientRequestID string
+	}{
+		{name: "too long", clientRequestID: strings.Repeat("a", 65)},
+		{name: "non ascii", clientRequestID: "request-测试"},
+		{name: "non printable", clientRequestID: "request\n02"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const alias = "lsf-video-enhancement-test-tenant"
+			requestBody, err := common.Marshal(map[string]any{
+				"model": alias,
+				"metadata": map[string]any{
+					"video_url":  "https://media.example.invalid/source.mp4",
+					"resolution": "1080p", "duration": 6,
+					"client_request_id": test.clientRequestID,
+				},
+			})
+			require.NoError(t, err)
+
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+
+			mapping := `{"` + alias + `":"` + mediakit.CanonicalModel + `"}`
+			fixture := setupSeedance25SubmitFixture(t, requestBody, server.URL, mapping)
+			fixture.info.OriginModelName = alias
+			common.SetContextKey(fixture.context, constant.ContextKeyChannelType, constant.ChannelTypeMediaKit)
+
+			result, taskErr := relay.RelayTaskSubmitNoWrite(fixture.context, fixture.info)
+			require.Nil(t, result)
+			require.NotNil(t, taskErr)
+			require.Zero(t, calls.Load())
+			require.Nil(t, fixture.info.Billing)
+			require.Zero(t, fixture.info.ReservationTaskID)
+
+			var taskCount int64
+			require.NoError(t, model.DB.Model(&model.Task{}).Count(&taskCount).Error)
+			require.Zero(t, taskCount)
+		})
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,6 +28,13 @@ func mediaKitContext(t *testing.T, body string) (*gin.Context, *relaycommon.Rela
 	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
 	adaptor := &TaskAdaptor{}
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	clientRequestID, openAIError := relaycommon.ExtractClientRequestIDFromTaskRequest(req)
+	require.Nil(t, openAIError)
+	if clientRequestID != nil {
+		info.ClientRequestID = *clientRequestID
+	}
 	info.ChannelMeta = &relaycommon.ChannelMeta{IsModelMapped: true}
 	info.UpstreamModelName = CanonicalModel
 	return c, info, adaptor
@@ -50,6 +58,7 @@ func TestMediaKitDefaultsAndDoesNotForwardEstimationMetadata(t *testing.T) {
 	require.False(t, normalized.FPSProvided)
 	require.NotContains(t, normalized.Forward, "tool_version")
 	require.NotContains(t, normalized.Forward, "fps")
+	require.NotContains(t, normalized.Forward, "client_token")
 
 	reader, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
@@ -59,7 +68,104 @@ func TestMediaKitDefaultsAndDoesNotForwardEstimationMetadata(t *testing.T) {
 	require.NoError(t, common.Unmarshal(forwarded, &payload))
 	require.NotContains(t, payload, "duration")
 	require.NotContains(t, payload, "client_request_id")
+	require.NotContains(t, payload, "metadata")
+	require.Equal(t, "order-1", payload["client_token"])
 	require.Equal(t, "https://example.com/source.mp4?signature=secret", payload["video_url"])
+}
+
+func TestMediaKitClientRequestIDMapsToClientToken(t *testing.T) {
+	_, c, info, adaptor := validateBody(t, `{
+		"model":"lsf-video-enhancement-acme",
+		"metadata":{
+			"video_url":"https://example.com/source.mp4",
+			"tool_version":"standard",
+			"scene":"aigc",
+			"resolution":"1080p",
+			"duration":6,
+			"client_request_id":"mediakit-p0-preflight-20260812-02"
+		}
+	}`)
+
+	reader, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	require.Equal(t, "mediakit-p0-preflight-20260812-02", payload["client_token"])
+	require.Equal(t, "https://example.com/source.mp4", payload["video_url"])
+	require.Equal(t, "standard", payload["tool_version"])
+	require.Equal(t, "aigc", payload["scene"])
+	require.Equal(t, "1080p", payload["resolution"])
+	require.NotContains(t, payload, "duration")
+	require.NotContains(t, payload, "client_request_id")
+	require.NotContains(t, payload, "metadata")
+	require.NotContains(t, payload, "fps")
+}
+
+func TestMediaKitRejectsDirectClientTokenOverride(t *testing.T) {
+	for _, field := range []string{"client_token", "client-token", "ClientToken"} {
+		t.Run(field, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			body := `{"model":"lsf-video-enhancement-acme","` + field + `":"customer-override","metadata":{"video_url":"https://example.com/source.mp4","resolution":"1080p","duration":6,"client_request_id":"request-02"}}`
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(body))
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			require.NotNil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+		})
+	}
+}
+
+func TestMediaKitClientTokenValidation(t *testing.T) {
+	base := map[string]any{
+		"video_url":  "https://example.com/source.mp4",
+		"resolution": "1080p",
+		"duration":   6.0,
+	}
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{name: "too long", value: strings.Repeat("a", 65)},
+		{name: "non ascii", value: "request-测试"},
+		{name: "non printable", value: "request\n02"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := make(map[string]any, len(base)+1)
+			for key, value := range base {
+				metadata[key] = value
+			}
+			metadata["client_request_id"] = test.value
+			_, taskErr := normalizeMetadata(metadata)
+			require.NotNil(t, taskErr)
+		})
+	}
+
+	valid := make(map[string]any, len(base)+1)
+	for key, value := range base {
+		valid[key] = value
+	}
+	valid["client_request_id"] = strings.Repeat("a", 64)
+	normalized, taskErr := normalizeMetadata(valid)
+	require.Nil(t, taskErr)
+	require.Equal(t, strings.Repeat("a", 64), normalized.ClientToken)
+}
+
+func TestMediaKitMissingClientRequestIDPreservesExistingForwarding(t *testing.T) {
+	normalized, c, info, adaptor := validateBody(t, `{
+		"model":"lsf-video-enhancement-acme",
+		"metadata":{"video_url":"https://example.com/source.mp4","resolution":"1080p","duration":6}
+	}`)
+	require.Empty(t, normalized.ClientToken)
+	reader, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	require.NotContains(t, payload, "client_token")
+	require.NotContains(t, payload, "fps")
 }
 
 func TestMediaKitForwardsAllAllowedProvidedFields(t *testing.T) {
@@ -115,6 +221,7 @@ func TestMediaKitRejectsInvalidFieldsAndCombinations(t *testing.T) {
 		mutate func(map[string]any)
 	}{
 		{name: "unknown", mutate: func(m map[string]any) { m["mystery"] = true }},
+		{name: "direct client token", mutate: func(m map[string]any) { m["client_token"] = "forbidden" }},
 		{name: "source task", mutate: func(m map[string]any) { m["source_task_id"] = "task" }},
 		{name: "project", mutate: func(m map[string]any) { m["ProjectName"] = "project" }},
 		{name: "both resolutions", mutate: func(m map[string]any) { m["resolution_limit"] = 1080 }},

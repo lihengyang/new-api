@@ -40,6 +40,7 @@ type normalizedRequest struct {
 	Duration       float64
 	FPS            float64
 	FPSProvided    bool
+	ClientToken    string
 	Forward        map[string]any
 }
 
@@ -60,7 +61,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	for key := range raw {
 		normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))
-		if normalized == "projectname" || normalized == "sourcetaskid" {
+		if normalized == "projectname" || normalized == "sourcetaskid" || normalized == "clienttoken" {
 			return invalidRequest("unsupported MediaKit request field")
 		}
 	}
@@ -88,6 +89,9 @@ func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.Re
 	normalized, validationErr := normalizeMetadata(req.Metadata)
 	if validationErr != nil {
 		return validationErr
+	}
+	if normalized.ClientToken != info.ClientRequestID {
+		return invalidRequest("metadata.client_request_id is inconsistent with the validated request")
 	}
 	c.Set(normalizedContextKey, normalized)
 	return nil
@@ -215,9 +219,19 @@ func normalizeMetadata(metadata map[string]any) (*normalizedRequest, *dto.TaskEr
 		forward["bit_depth"] = value
 	}
 
+	clientToken := ""
+	if raw, exists := metadata["client_request_id"]; exists {
+		value, valid := stringValue(raw)
+		if !valid || !validMediaKitClientToken(value) {
+			return nil, invalidRequest("metadata.client_request_id must contain 1-64 printable ASCII characters")
+		}
+		clientToken = value
+	}
+
 	return &normalizedRequest{
 		VideoURL: videoURL, ToolVersion: toolVersion, ResolutionTier: resolutionTier,
-		Duration: duration, FPS: fps, FPSProvided: fpsProvided, Forward: forward,
+		Duration: duration, FPS: fps, FPSProvided: fpsProvided,
+		ClientToken: clientToken, Forward: forward,
 	}, nil
 }
 
@@ -287,6 +301,18 @@ func finitePositive(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
+func validMediaKitClientToken(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 func oneOf(value string, values ...string) bool {
 	for _, candidate := range values {
 		if value == candidate {
@@ -330,7 +356,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, _ *relaycommon.RelayInfo)
 	if err != nil {
 		return nil, err
 	}
-	body, err := common.Marshal(normalized.Forward)
+	payload := make(map[string]any, len(normalized.Forward)+1)
+	for key, value := range normalized.Forward {
+		payload[key] = value
+	}
+	if normalized.ClientToken != "" {
+		payload["client_token"] = normalized.ClientToken
+	}
+	body, err := common.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
