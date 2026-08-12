@@ -203,6 +203,14 @@ Wrong: a failed Seed Audio upstream attempt should be retried with the same
 Correct: failed idempotency records remain tied to the original
 `client_request_id`; a new upstream attempt needs a fresh client request ID.
 
+Wrong: BytePlus MediaKit task status is nested in `result` with the output
+fields.
+
+Correct: the validated MediaKit task response places `status` on the response
+envelope while `result` carries the output URL and actual media fields. Parse
+the envelope status first; use the existing safe fallback only when the entire
+upstream response has no status.
+
 If a fact conflicts with chat memory, prefer the repo context pack and latest read-only verification.
 
 Update this file whenever a repeated AI/human mistake is discovered.

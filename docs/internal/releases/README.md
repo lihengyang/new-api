@@ -39,6 +39,17 @@ sanitized operational evidence that must not be copied into customer docs.
 - Internal smoke used the Henry/LSF `henrytest` testing account/model entry,
   not a customer token, customer alias, customer group, or customer balance.
 
+## MediaKit Video Enhancement P0
+
+- Record: `2026-08-12-mediakit-video-enhancement-p0-preflight.md`
+- Final status: `PREFLIGHT_VALIDATED / PRODUCTION_NOT_APPROVED`
+- Preflight source / OCI revision:
+  `968670a13306d9ea57497aa48ff022a732c2112e`
+- Scope: BytePlus AI MediaKit Standard 1080p creation, terminal synchronization,
+  actual-media billing reconciliation, and repeated-GET idempotency.
+- Customer documentation was not changed. Production remains a separate Henry
+  approval gate.
+
 ## Documentation Guardrails
 
 - Do not publish customer files with `_FIXED`, `_DRAFT`, `_REJECTED`, or wrong
