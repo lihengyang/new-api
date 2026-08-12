@@ -32,6 +32,7 @@ type PriceData struct {
 	BillingRuleVersion    string
 	OtherRatioNumerator   int64
 	OtherRatioDenominator int64
+	BillingMetadata       map[string]any
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {

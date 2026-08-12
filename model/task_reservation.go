@@ -13,20 +13,22 @@ import (
 const TaskClientRequestUniqueIndexName = "idx_tasks_token_client_request"
 
 var ErrTaskReservationNotReserved = errors.New("task reservation not found or no longer reserved")
+var ErrTaskExclusiveActive = errors.New("a non-terminal task is already active for this user")
 
 type TaskReservationParams struct {
-	TaskID            string
-	TokenId           int
-	ClientRequestID   string
-	ClientRequestHash string
-	UserId            int
-	Group             string
-	ChannelId         int
-	Platform          constant.TaskPlatform
-	Action            string
-	OriginModelName   string
-	UpstreamModelName string
-	SubmitTime        int64
+	TaskID                      string
+	TokenId                     int
+	ClientRequestID             string
+	ClientRequestHash           string
+	UserId                      int
+	Group                       string
+	ChannelId                   int
+	Platform                    constant.TaskPlatform
+	Action                      string
+	OriginModelName             string
+	UpstreamModelName           string
+	SubmitTime                  int64
+	ExclusiveNonTerminalPerUser bool
 }
 
 type FinalizeTaskReservationParams struct {
@@ -49,7 +51,7 @@ type FailTaskReservationParams struct {
 
 func CreateTaskReservation(params TaskReservationParams) (*Task, error) {
 	clientRequestID := strings.TrimSpace(params.ClientRequestID)
-	if clientRequestID == "" {
+	if clientRequestID == "" && !params.ExclusiveNonTerminalPerUser {
 		return nil, errors.New("client_request_id is required")
 	}
 
@@ -62,6 +64,10 @@ func CreateTaskReservation(params TaskReservationParams) (*Task, error) {
 		submitTime = time.Now().Unix()
 	}
 
+	var clientRequestIDPtr *string
+	if clientRequestID != "" {
+		clientRequestIDPtr = &clientRequestID
+	}
 	var clientRequestHash *string
 	if params.ClientRequestHash != "" {
 		clientRequestHash = &params.ClientRequestHash
@@ -70,7 +76,7 @@ func CreateTaskReservation(params TaskReservationParams) (*Task, error) {
 	task := &Task{
 		TaskID:            taskID,
 		TokenId:           params.TokenId,
-		ClientRequestID:   &clientRequestID,
+		ClientRequestID:   clientRequestIDPtr,
 		ClientRequestHash: clientRequestHash,
 		UserId:            params.UserId,
 		Group:             params.Group,
@@ -89,7 +95,44 @@ func CreateTaskReservation(params TaskReservationParams) (*Task, error) {
 			TokenId: params.TokenId,
 		},
 	}
-	if err := DB.Create(task).Error; err != nil {
+	if !params.ExclusiveNonTerminalPerUser {
+		if err := DB.Create(task).Error; err != nil {
+			return nil, err
+		}
+		return task, nil
+	}
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		// Serialize admission on the existing user row. This is portable across
+		// the supported databases and avoids a schema migration or process-local
+		// mutex that would not protect a multi-instance deployment.
+		var user User
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Select("id").First(&user, params.UserId).Error; err != nil {
+			return err
+		}
+		if clientRequestID != "" {
+			var existing Task
+			err := tx.Where("token_id = ? and client_request_id = ?", params.TokenId, clientRequestID).First(&existing).Error
+			if err == nil {
+				return gorm.ErrDuplicatedKey
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		var active int64
+		if err := tx.Model(&Task{}).
+			Where("user_id = ? AND platform = ?", params.UserId, params.Platform).
+			Where("status NOT IN ?", []TaskStatus{TaskStatusFailure, TaskStatusSuccess}).
+			Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return ErrTaskExclusiveActive
+		}
+		return tx.Create(task).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 	return task, nil

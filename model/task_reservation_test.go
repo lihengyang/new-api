@@ -1,13 +1,33 @@
 package model
 
 import (
+	"errors"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/stretchr/testify/require"
 )
+
+func mediaKitReservationParams(userID int, clientRequestID string) TaskReservationParams {
+	return TaskReservationParams{
+		TaskID: GenerateTaskID(), TokenId: userID, ClientRequestID: clientRequestID,
+		ClientRequestHash: "hash_" + clientRequestID, UserId: userID, Group: "default", ChannelId: userID,
+		Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMediaKit)),
+		Action:   constant.TaskActionGenerate, OriginModelName: "lsf-video-enhancement-tenant",
+		UpstreamModelName: "mediakit-video-enhancement", ExclusiveNonTerminalPerUser: true,
+	}
+}
+
+func seedMediaKitReservationUser(t *testing.T, userID int) {
+	t.Helper()
+	require.NoError(t, DB.Create(&User{
+		Id: userID, Username: "mediakit-reservation-" + strconv.Itoa(userID),
+		AffCode: "mediakit-reservation-aff-" + strconv.Itoa(userID), Status: common.UserStatusEnabled,
+	}).Error)
+}
 
 func reservationParams(tokenID int, clientRequestID string) TaskReservationParams {
 	return TaskReservationParams{
@@ -56,6 +76,68 @@ func TestCreateTaskReservationRejectsEmptyClientRequestID(t *testing.T) {
 	_, err := CreateTaskReservation(reservationParams(102, "   "))
 
 	require.Error(t, err)
+}
+
+func TestMediaKitExclusiveReservationAllowsEmptyClientRequestID(t *testing.T) {
+	truncateTables(t)
+	seedMediaKitReservationUser(t, 8101)
+	task, err := CreateTaskReservation(mediaKitReservationParams(8101, ""))
+	require.NoError(t, err)
+	require.Nil(t, task.ClientRequestID)
+}
+
+func TestMediaKitExclusiveReservationBlocksSameUserButNotDifferentUsers(t *testing.T) {
+	truncateTables(t)
+	seedMediaKitReservationUser(t, 8102)
+	seedMediaKitReservationUser(t, 8103)
+	_, err := CreateTaskReservation(mediaKitReservationParams(8102, "first"))
+	require.NoError(t, err)
+	_, err = CreateTaskReservation(mediaKitReservationParams(8102, "second"))
+	require.ErrorIs(t, err, ErrTaskExclusiveActive)
+	_, err = CreateTaskReservation(mediaKitReservationParams(8103, "other-user"))
+	require.NoError(t, err)
+}
+
+func TestMediaKitExclusiveReservationPreservesIdempotentDuplicate(t *testing.T) {
+	truncateTables(t)
+	seedMediaKitReservationUser(t, 8104)
+	_, err := CreateTaskReservation(mediaKitReservationParams(8104, "same-request"))
+	require.NoError(t, err)
+	_, err = CreateTaskReservation(mediaKitReservationParams(8104, "same-request"))
+	require.True(t, IsTaskClientRequestDuplicateError(err))
+}
+
+func TestMediaKitExclusiveReservationConcurrentAdmissionAllowsOnlyOne(t *testing.T) {
+	truncateTables(t)
+	seedMediaKitReservationUser(t, 8105)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, requestID := range []string{"concurrent-a", "concurrent-b"} {
+		wg.Add(1)
+		go func(requestID string) {
+			defer wg.Done()
+			<-start
+			_, err := CreateTaskReservation(mediaKitReservationParams(8105, requestID))
+			errs <- err
+		}(requestID)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	successes, blocked := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrTaskExclusiveActive):
+			blocked++
+		default:
+			require.NoError(t, err)
+		}
+	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, blocked)
 }
 
 func TestCreateTaskReservationTrimsClientRequestIDBeforeStoring(t *testing.T) {

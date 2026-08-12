@@ -303,19 +303,31 @@ func taskNeedsUpdate(oldTask *model.Task, newTask dto.SunoDataResponse) bool {
 func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
 	for channelId, taskIds := range taskChannelM {
 		if err := updateVideoTasks(ctx, platform, channelId, taskIds, taskM); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Channel #%d failed to update video async tasks: %s", channelId, err.Error()))
+			if platform == constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeMediaKit)) {
+				logger.LogError(ctx, fmt.Sprintf("MediaKit video task query failed: %s", err.Error()))
+			} else {
+				logger.LogError(ctx, fmt.Sprintf("Channel #%d failed to update video async tasks: %s", channelId, err.Error()))
+			}
 		}
 	}
 	return nil
 }
 
 func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, channelId int, taskIds []string, taskM map[string]*model.Task) error {
-	logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending video tasks: %d", channelId, len(taskIds)))
+	isMediaKit := platform == constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeMediaKit))
+	if isMediaKit {
+		logger.LogInfo(ctx, fmt.Sprintf("MediaKit pending video tasks: %d", len(taskIds)))
+	} else {
+		logger.LogInfo(ctx, fmt.Sprintf("Channel #%d pending video tasks: %d", channelId, len(taskIds)))
+	}
 	if len(taskIds) == 0 {
 		return nil
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
+		if isMediaKit {
+			return errors.New("failed to load MediaKit task query configuration")
+		}
 		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
 		var failedIDs []int64
 		for _, upstreamID := range taskIds {
@@ -346,7 +358,7 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	for _, taskId := range taskIds {
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
 			displayTaskID := taskId
-			if task := taskM[taskId]; taskUsesSeedance25Policy(task) {
+			if task := taskM[taskId]; taskUsesSensitiveVideoPolicy(task) {
 				displayTaskID = task.TaskID
 			}
 			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", displayTaskID, err.Error()))
@@ -383,7 +395,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		"action":  task.Action,
 	}, proxy)
 	if err != nil {
-		if taskUsesSeedance25Policy(task) {
+		if taskUsesSensitiveVideoPolicy(task) {
 			return fmt.Errorf("fetchTask failed for task %s", task.TaskID)
 		}
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
@@ -391,7 +403,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		if taskUsesSeedance25Policy(task) {
+		if taskUsesSensitiveVideoPolicy(task) {
 			return fmt.Errorf("readAll failed for task %s: %w", task.TaskID, err)
 		}
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
@@ -403,7 +415,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
 	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
-		if !taskUsesSeedance25Policy(task) {
+		if !taskUsesSensitiveVideoPolicy(task) {
 			logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask parsed as new api response format: %+v", responseItems))
 		}
 		t := responseItems.Data
@@ -420,14 +432,29 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			taskResult, err = adaptor.ParseTaskResult(responseBody)
 		}
 		if err != nil {
-			if taskUsesSeedance25Policy(task) {
+			if taskUsesSensitiveVideoPolicy(task) {
 				return fmt.Errorf("parseTaskResult failed for task %s: %w", task.TaskID, err)
 			}
 			return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 		}
 	}
 
+	return applyVideoTaskResultWithSnapshot(ctx, adaptor, task, taskResult, responseBody, snap)
+}
+
+// ApplyVideoTaskResult applies an already-fetched result through the same
+// terminal CAS and billing path as the background poller. Customer-triggered
+// MediaKit GETs use this entry point, so concurrent GETs settle at most once.
+func ApplyVideoTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo, responseBody []byte) error {
+	if task == nil {
+		return errors.New("task is missing")
+	}
+	return applyVideoTaskResultWithSnapshot(ctx, adaptor, task, taskResult, responseBody, task.Snapshot())
+}
+
+func applyVideoTaskResultWithSnapshot(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo, responseBody []byte, snap model.TaskSnapshot) error {
 	now := time.Now().Unix()
+	var err error
 	if taskResult.Status == "" {
 		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
 		errorResult := &dto.GeneralErrorResponse{}
@@ -444,10 +471,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				taskResult = relaycommon.FailTaskInfo("upstream returned error")
 			} else {
 				// unknown error format, log original response
-				if taskUsesSeedance25Policy(task) {
+				if taskUsesSensitiveVideoPolicy(task) {
 					logger.LogError(ctx, fmt.Sprintf("Task %s returned an unrecognized upstream status", task.TaskID))
 				} else {
-					logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
+					logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", task.TaskID, string(responseBody)))
 				}
 				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
 			}
@@ -462,7 +489,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 	}
 	task.Data = redactVideoResponseBody(persistedBody)
-	if taskUsesSeedance25Policy(task) {
+	if taskUsesSensitiveVideoPolicy(task) {
 		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask task=%s status=%s progress=%s", task.TaskID, taskResult.Status, taskResult.Progress))
 	} else {
 		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
@@ -489,7 +516,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		if strings.HasPrefix(taskResult.Url, "data:") {
+		if taskUsesMediaKitPolicy(task) {
+			// MediaKit output URLs are short-lived signed values. They are returned
+			// only from the customer GET that fetched them and never persisted.
+			task.PrivateData.ResultURL = ""
+		} else if strings.HasPrefix(taskResult.Url, "data:") {
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
@@ -501,8 +532,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		shouldSettle = true
 	case model.TaskStatusFailure:
-		if !taskUsesSeedance25Policy(task) {
-			logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
+		if !taskUsesSensitiveVideoPolicy(task) {
+			logger.LogJson(ctx, fmt.Sprintf("Task %s failed", task.TaskID), task)
 		}
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
@@ -534,13 +565,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			shouldRefund = false
 			shouldSettle = false
 		}
-	} else if !snap.Equal(task.Snapshot()) {
-		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
-		}
 	} else {
-		// No changes, skip update
-		logger.LogDebug(ctx, fmt.Sprintf("No update needed for task %s", task.TaskID))
+		if isDone {
+			// A terminal task may be queried again to obtain a transient MediaKit
+			// URL, but billing belongs only to the winning terminal transition.
+			shouldRefund = false
+			shouldSettle = false
+		}
+		if !snap.Equal(task.Snapshot()) {
+			if _, err := task.UpdateWithStatus(snap.Status); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
+			}
+		} else {
+			// No changes, skip update
+			logger.LogDebug(ctx, fmt.Sprintf("No update needed for task %s", task.TaskID))
+		}
 	}
 
 	if shouldSettle {
@@ -563,6 +602,15 @@ func taskUsesSeedance25Policy(task *model.Task) bool {
 		}
 	}
 	return relaycommon.IsSeedance25OriginAlias(task.Properties.OriginModelName)
+}
+
+func taskUsesMediaKitPolicy(task *model.Task) bool {
+	return task != nil && task.PrivateData.BillingContext != nil &&
+		task.PrivateData.BillingContext.BillingFamily == relaycommon.MediaKitBillingFamily
+}
+
+func taskUsesSensitiveVideoPolicy(task *model.Task) bool {
+	return taskUsesSeedance25Policy(task) || taskUsesMediaKitPolicy(task)
 }
 
 func redactVideoResponseBody(body []byte) []byte {

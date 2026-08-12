@@ -46,18 +46,25 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
 	}
-	if info.IsModelMapped && !relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+	isMediaKit := info.PriceData.BillingFamily == relaycommon.MediaKitBillingFamily
+	if info.IsModelMapped && !relaycommon.IsSeedance25OriginAlias(info.OriginModelName) && !isMediaKit {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	channelID := info.ChannelId
+	group := info.UsingGroup
+	if isMediaKit {
+		channelID = 0
+		group = ""
+	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-		ChannelId: info.ChannelId,
+		ChannelId: channelID,
 		ModelName: info.OriginModelName,
 		TokenName: tokenName,
 		Quota:     info.PriceData.Quota,
 		Content:   logContent,
 		TokenId:   info.TokenId,
-		Group:     info.UsingGroup,
+		Group:     group,
 		Other:     other,
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
@@ -132,11 +139,18 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		}
 	}
 	props := task.Properties
-	if !taskUsesSeedance25Policy(task) && props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
+	if !taskUsesSeedance25Policy(task) && !taskUsesMediaKitPolicy(task) && props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
 	return other
+}
+
+func taskBillingLogScope(task *model.Task) (channelID int, group string) {
+	if taskUsesMediaKitPolicy(task) {
+		return 0, ""
+	}
+	return task.ChannelId, task.Group
 }
 
 // taskModelName 从 BillingContext 或 Properties 中获取模型名称。
@@ -168,15 +182,16 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
+	channelID, group := taskBillingLogScope(task)
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
 		Content:   "",
-		ChannelId: task.ChannelId,
+		ChannelId: channelID,
 		ModelName: taskModelName(task),
 		Quota:     quota,
 		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
+		Group:     group,
 		Other:     other,
 	})
 }
@@ -194,20 +209,21 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
-		if taskUsesSeedance25Policy(task) {
+		if taskUsesSeedance25Policy(task) || taskUsesMediaKitPolicy(task) {
 			other := taskBillingOther(task)
 			other["task_id"] = task.TaskID
 			other["pre_consumed_quota"] = preConsumedQuota
 			other["actual_quota"] = actualQuota
+			channelID, group := taskBillingLogScope(task)
 			model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 				UserId:    task.UserId,
 				LogType:   model.LogTypeConsume,
 				Content:   reason,
-				ChannelId: task.ChannelId,
+				ChannelId: channelID,
 				ModelName: taskModelName(task),
 				Quota:     0,
 				TokenId:   task.PrivateData.TokenId,
-				Group:     task.Group,
+				Group:     group,
 				Other:     other,
 				Force:     true,
 			})
@@ -249,17 +265,18 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	other["task_id"] = task.TaskID
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
+	channelID, group := taskBillingLogScope(task)
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   logType,
 		Content:   reason,
-		ChannelId: task.ChannelId,
+		ChannelId: channelID,
 		ModelName: taskModelName(task),
 		Quota:     logQuota,
 		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
+		Group:     group,
 		Other:     other,
-		Force:     taskUsesSeedance25Policy(task),
+		Force:     taskUsesSeedance25Policy(task) || taskUsesMediaKitPolicy(task),
 	})
 }
 

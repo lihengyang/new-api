@@ -356,10 +356,15 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	isMediaKit := channelError.ChannelType == constant.ChannelTypeMediaKit
+	if isMediaKit {
+		logger.LogError(c, fmt.Sprintf("MediaKit upstream error (status code: %d): %s", err.StatusCode, err.Error()))
+	} else {
+		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
+	if service.ShouldDisableChannel(err) && channelError.AutoBan && !isMediaKit {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})
@@ -373,6 +378,10 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		tokenId := c.GetInt("token_id")
 		userGroup := c.GetString("group")
 		channelId := c.GetInt("channel_id")
+		if isMediaKit {
+			channelId = 0
+			userGroup = ""
+		}
 		other := make(map[string]interface{})
 		if c.Request != nil && c.Request.URL != nil {
 			other["request_path"] = c.Request.URL.Path
@@ -380,18 +389,26 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other["error_type"] = err.GetErrorType()
 		other["error_code"] = err.GetErrorCode()
 		other["status_code"] = err.StatusCode
-		other["channel_id"] = channelId
-		other["channel_name"] = c.GetString("channel_name")
-		other["channel_type"] = c.GetInt("channel_type")
-		adminInfo := make(map[string]interface{})
-		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
-		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
-		if isMultiKey {
-			adminInfo["is_multi_key"] = true
-			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+		if !isMediaKit {
+			other["channel_id"] = channelId
+			other["channel_name"] = c.GetString("channel_name")
+			other["channel_type"] = c.GetInt("channel_type")
 		}
-		service.AppendChannelAffinityAdminInfo(c, adminInfo)
-		other["admin_info"] = adminInfo
+		adminInfo := make(map[string]interface{})
+		if !isMediaKit {
+			adminInfo["use_channel"] = c.GetStringSlice("use_channel")
+		}
+		if !isMediaKit {
+			isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
+			if isMultiKey {
+				adminInfo["is_multi_key"] = true
+				adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+			}
+			service.AppendChannelAffinityAdminInfo(c, adminInfo)
+		}
+		if len(adminInfo) > 0 {
+			other["admin_info"] = adminInfo
+		}
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {
 			startTime = time.Now()
@@ -555,7 +572,7 @@ func RelayTask(c *gin.Context) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		if useClientRequestID {
+		if useClientRequestID || channel.Type == constant.ChannelTypeMediaKit {
 			result, taskErr = relay.RelayTaskSubmitNoWrite(c, relayInfo)
 		} else {
 			result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
@@ -569,6 +586,11 @@ func RelayTask(c *gin.Context) {
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+		}
+		// MediaKit create is deliberately single-shot: an uncertain or failed
+		// POST must never be resubmitted to another key/channel.
+		if channel.Type == constant.ChannelTypeMediaKit {
+			break
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
@@ -595,7 +617,7 @@ func RelayTask(c *gin.Context) {
 	}
 
 	if taskErr != nil {
-		if useClientRequestID && !skipTaskErrorRefund {
+		if relayInfo.ReservationTaskID > 0 && !skipTaskErrorRefund {
 			failTaskReservationIfNeeded(taskErr, relayInfo)
 		}
 		respondTaskError(c, taskErr)
@@ -712,6 +734,7 @@ func applyTaskPrivateData(privateData *model.TaskPrivateData, relayInfo *relayco
 		BillingRuleVersion:    relayInfo.PriceData.BillingRuleVersion,
 		OtherRatioNumerator:   relayInfo.PriceData.OtherRatioNumerator,
 		OtherRatioDenominator: relayInfo.PriceData.OtherRatioDenominator,
+		BillingMetadata:       relayInfo.PriceData.BillingMetadata,
 	}
 }
 

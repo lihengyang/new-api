@@ -91,6 +91,13 @@ type TaskPrechargeEstimator interface {
 	EstimatePrechargeQuota(c *gin.Context, info *relaycommon.RelayInfo) (quota int, ok bool)
 }
 
+// TaskPriceInitializer allows an async adaptor with an immutable external rate
+// card to build price data without consulting mutable per-model price/ratio
+// settings. GroupRatio still comes from the normal request-time snapshot.
+type TaskPriceInitializer interface {
+	InitializeTaskPrice(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, *dto.TaskError)
+}
+
 // TaskPriceDataValidator validates adaptor-specific billing invariants after
 // the origin-alias price has been resolved and before reservation or dispatch.
 type TaskPriceDataValidator interface {
@@ -108,4 +115,8 @@ type TaskNoWriteResponseBuilder interface {
 
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
+}
+
+type OpenAIVideoTransientConverter interface {
+	ConvertToOpenAIVideoWithResult(originTask *model.Task, result *relaycommon.TaskInfo) ([]byte, error)
 }

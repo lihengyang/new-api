@@ -671,6 +671,8 @@ type TaskRelayInfo struct {
 	LockedChannel any
 }
 
+const MediaKitBillingFamily = "mediakit_video_enhancement"
+
 type TaskSubmitReq struct {
 	Prompt         string                 `json:"prompt"`
 	Model          string                 `json:"model,omitempty"`
@@ -754,18 +756,23 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 }
 
 type TaskInfo struct {
-	Code                  int    `json:"code"`
-	TaskID                string `json:"task_id"`
-	Status                string `json:"status"`
-	Reason                string `json:"reason,omitempty"`
-	Url                   string `json:"url,omitempty"`
-	RemoteUrl             string `json:"remote_url,omitempty"`
-	Progress              string `json:"progress,omitempty"`
-	CompletionTokens      int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	CompletionTokensValid bool   `json:"-"`
-	TotalTokens           int    `json:"total_tokens,omitempty"` // 用于旧模型按倍率计费
-	UpstreamErrorCode     string `json:"-"`
-	LastFrameURL          string `json:"last_frame_url,omitempty"`
+	Code                  int     `json:"code"`
+	TaskID                string  `json:"task_id"`
+	Status                string  `json:"status"`
+	Reason                string  `json:"reason,omitempty"`
+	Url                   string  `json:"url,omitempty"`
+	RemoteUrl             string  `json:"remote_url,omitempty"`
+	Progress              string  `json:"progress,omitempty"`
+	CompletionTokens      int     `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	CompletionTokensValid bool    `json:"-"`
+	TotalTokens           int     `json:"total_tokens,omitempty"` // 用于旧模型按倍率计费
+	UpstreamErrorCode     string  `json:"-"`
+	LastFrameURL          string  `json:"last_frame_url,omitempty"`
+	Duration              float64 `json:"duration,omitempty"`
+	FPS                   float64 `json:"fps,omitempty"`
+	Resolution            string  `json:"resolution,omitempty"`
+	ToolVersion           string  `json:"tool_version,omitempty"`
+	ExpiresAt             int64   `json:"expires_at,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

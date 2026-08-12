@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -200,7 +201,8 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 	}
 
 	info.OriginModelName = modelName
-	if noWriteResponse && info.ClientRequestID != "" {
+	isMediaKit := info.ChannelType == constant.ChannelTypeMediaKit
+	if isMediaKit || (noWriteResponse && info.ClientRequestID != "") {
 		replayResult, taskErr := reserveTaskClientRequest(info, platform)
 		if taskErr != nil || replayResult != nil {
 			return replayResult, taskErr
@@ -208,9 +210,19 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 	}
 
 	// 4. 价格计算：基础模型价格
-	priceData, err := helper.ModelPriceHelperPerCall(c, info)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+	var priceData types.PriceData
+	if initializer, ok := adaptor.(channel.TaskPriceInitializer); ok {
+		var taskErr *dto.TaskError
+		priceData, taskErr = initializer.InitializeTaskPrice(c, info)
+		if taskErr != nil {
+			return nil, taskErr
+		}
+	} else {
+		var err error
+		priceData, err = helper.ModelPriceHelperPerCall(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		}
 	}
 	info.PriceData = priceData
 
@@ -268,7 +280,7 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
-		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) || isMediaKit {
 			return nil, service.TaskErrorWrapper(errors.New("upstream task submission failed"), "fail_to_fetch_task", resp.StatusCode)
 		}
 		responseBody, _ := io.ReadAll(resp.Body)
@@ -328,17 +340,18 @@ func reserveTaskClientRequest(info *relaycommon.RelayInfo, platform constant.Tas
 	}
 
 	task, err := model.CreateTaskReservation(model.TaskReservationParams{
-		TaskID:            info.PublicTaskID,
-		TokenId:           info.TokenId,
-		ClientRequestID:   info.ClientRequestID,
-		ClientRequestHash: info.ClientRequestHash,
-		UserId:            info.UserId,
-		Group:             info.UsingGroup,
-		ChannelId:         info.ChannelId,
-		Platform:          platform,
-		Action:            info.Action,
-		OriginModelName:   info.OriginModelName,
-		UpstreamModelName: info.UpstreamModelName,
+		TaskID:                      info.PublicTaskID,
+		TokenId:                     info.TokenId,
+		ClientRequestID:             info.ClientRequestID,
+		ClientRequestHash:           info.ClientRequestHash,
+		UserId:                      info.UserId,
+		Group:                       info.UsingGroup,
+		ChannelId:                   info.ChannelId,
+		Platform:                    platform,
+		Action:                      info.Action,
+		OriginModelName:             info.OriginModelName,
+		UpstreamModelName:           info.UpstreamModelName,
+		ExclusiveNonTerminalPerUser: info.ChannelType == constant.ChannelTypeMediaKit,
 	})
 	if err == nil {
 		info.ReservationTaskID = task.ID
@@ -360,6 +373,13 @@ func reserveTaskClientRequest(info *relaycommon.RelayInfo, platform constant.Tas
 			ClientRequestID:   info.ClientRequestID,
 			ClientRequestHash: info.ClientRequestHash,
 		}, nil
+	}
+	if errors.Is(err, model.ErrTaskExclusiveActive) {
+		return nil, service.TaskErrorWrapperLocal(
+			errors.New("a MediaKit video enhancement task is already in progress"),
+			"mediakit_task_in_progress",
+			http.StatusConflict,
+		)
 	}
 
 	common.SysError("create task reservation error: " + err.Error())
@@ -537,6 +557,12 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	if isOpenAIVideoAPI {
+		if realtimeResp := tryMediaKitRealtimeFetch(originTask); len(realtimeResp) > 0 {
+			respBody = realtimeResp
+			return
+		}
+	}
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
@@ -578,6 +604,67 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
 	return
+}
+
+func tryMediaKitRealtimeFetch(task *model.Task) []byte {
+	if task == nil || task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMediaKit)) {
+		return nil
+	}
+	channelModel, err := model.GetChannelById(task.ChannelId, true)
+	if err != nil || channelModel.Type != constant.ChannelTypeMediaKit {
+		return nil
+	}
+	adaptor := GetTaskAdaptor(task.Platform)
+	if adaptor == nil {
+		return nil
+	}
+	baseURL := channelModel.GetBaseURL()
+	if baseURL == "" {
+		baseURL = constant.ChannelBaseURLs[channelModel.Type]
+	}
+	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
+		"task_id": task.GetUpstreamTaskID(),
+		"action":  task.Action,
+	}, channelModel.GetSetting().Proxy)
+	if err != nil || resp == nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	var result *relaycommon.TaskInfo
+	if parser, ok := adaptor.(interface {
+		ParseTaskResultForTask(*model.Task, []byte) (*relaycommon.TaskInfo, error)
+	}); ok {
+		result, err = parser.ParseTaskResultForTask(task, body)
+	} else {
+		result, err = adaptor.ParseTaskResult(body)
+	}
+	if err != nil || result == nil {
+		return nil
+	}
+	if err := service.ApplyVideoTaskResult(context.Background(), adaptor, task, result, body); err != nil {
+		return nil
+	}
+	current, exists, err := model.GetByTaskId(task.UserId, task.TaskID)
+	if err != nil || !exists {
+		return nil
+	}
+	converter, ok := adaptor.(channel.OpenAIVideoTransientConverter)
+	if !ok {
+		return nil
+	}
+	response, err := converter.ConvertToOpenAIVideoWithResult(current, result)
+	if err != nil {
+		return nil
+	}
+	response, err = EnsureOpenAIVideoResponseBytesTaskClientRequestID(response, current)
+	if err != nil {
+		return nil
+	}
+	return response
 }
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。

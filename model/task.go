@@ -139,6 +139,7 @@ type TaskBillingContext struct {
 	BillingRuleVersion    string             `json:"billing_rule_version,omitempty"`    // 提交时规则版本
 	OtherRatioNumerator   int64              `json:"other_ratio_numerator,omitempty"`   // 精确 OtherRatio 分子
 	OtherRatioDenominator int64              `json:"other_ratio_denominator,omitempty"` // 精确 OtherRatio 分母
+	BillingMetadata       map[string]any     `json:"billing_metadata,omitempty"`        // 适配器专用的不可变计费与审计快照
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -432,7 +433,7 @@ func (Task *Task) Insert() error {
 	return err
 }
 
-type taskSnapshot struct {
+type TaskSnapshot struct {
 	Status     TaskStatus
 	Progress   string
 	StartTime  int64
@@ -442,7 +443,9 @@ type taskSnapshot struct {
 	Data       json.RawMessage
 }
 
-func (s taskSnapshot) Equal(other taskSnapshot) bool {
+type taskSnapshot = TaskSnapshot
+
+func (s TaskSnapshot) Equal(other TaskSnapshot) bool {
 	return s.Status == other.Status &&
 		s.Progress == other.Progress &&
 		s.StartTime == other.StartTime &&
@@ -452,8 +455,8 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		bytes.Equal(s.Data, other.Data)
 }
 
-func (t *Task) Snapshot() taskSnapshot {
-	return taskSnapshot{
+func (t *Task) Snapshot() TaskSnapshot {
+	return TaskSnapshot{
 		Status:     t.Status,
 		Progress:   t.Progress,
 		StartTime:  t.StartTime,
