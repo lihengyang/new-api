@@ -29,7 +29,7 @@ func TestMediaKitCustomerGetSettlesAndReturnsSignedURLWithoutPersistingIt(t *tes
 		require.Equal(t, "/api/v1/tasks/provider-task-placeholder", r.URL.Path)
 		require.Equal(t, "Bearer placeholder-channel-key", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"success":true,"result":{"task_id":"provider-task-placeholder","status":"completed","duration":1,"fps":30,"resolution":"1080p","tool_version":"standard","video_url":"https://signed.example.invalid/result.mp4?signature=secret","expires_at":`+strconv.FormatInt(expiresAt, 10)+`}}`)
+		_, _ = io.WriteString(w, `{"success":true,"task_id":"provider-task-placeholder","status":"completed","result":{"duration":1,"fps":30,"resolution":"1080p","tool_version":"standard","video_url":"https://signed.example.invalid/result.mp4?signature=secret","expires_at":`+strconv.FormatInt(expiresAt, 10)+`}}`)
 	}))
 	defer server.Close()
 

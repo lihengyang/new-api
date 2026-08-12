@@ -528,7 +528,10 @@ func parseTaskResult(body []byte) (*relaycommon.TaskInfo, error) {
 	}
 	info.Duration, _ = numeric(result["duration"])
 	info.FPS, _ = numeric(result["fps"])
-	status := strings.ToLower(firstString(result, "status"))
+	status := strings.ToLower(firstString(envelope, "status"))
+	if status == "" {
+		status = strings.ToLower(firstString(result, "status"))
+	}
 	switch status {
 	case "pending", "submitted", "queued", "created", "waiting":
 		info.Status, info.Progress = string(model.TaskStatusQueued), taskcommon.ProgressQueued

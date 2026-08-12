@@ -114,6 +114,35 @@ func TestMediaKitSettlementRefundsOrSupplementsFullDifference(t *testing.T) {
 	}
 }
 
+func TestMediaKitEnvelopeCompletionSettlesOnlyOnce(t *testing.T) {
+	task, initialBalance := seedMediaKitSettlementTask(t, 13773, 1)
+	body := []byte(`{
+		"success":true,
+		"status":"completed",
+		"result":{
+			"video_url":"https://signed.example.invalid/result.mp4?signature=must-not-persist",
+			"duration":1,
+			"fps":30,
+			"resolution":"1080p",
+			"tool_version":"standard"
+		}
+	}`)
+	adaptor := &mediakit.TaskAdaptor{}
+	result, err := adaptor.ParseTaskResultForTask(task, body)
+	require.NoError(t, err)
+	require.Equal(t, string(model.TaskStatusSuccess), result.Status)
+	require.NoError(t, service.ApplyVideoTaskResult(context.Background(), adaptor, task, result, body))
+	require.Equal(t, initialBalance-3443, mediaKitUserQuota(t, task.UserId))
+
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	replayed, err := adaptor.ParseTaskResultForTask(&stored, body)
+	require.NoError(t, err)
+	require.NoError(t, service.ApplyVideoTaskResult(context.Background(), adaptor, &stored, replayed, body))
+	require.Equal(t, initialBalance-3443, mediaKitUserQuota(t, task.UserId))
+	require.Empty(t, stored.PrivateData.ResultURL)
+}
+
 func TestMediaKitConcurrentCompletionSettlesOnce(t *testing.T) {
 	task, initialBalance := seedMediaKitSettlementTask(t, 13773, 1)
 	var first, second model.Task

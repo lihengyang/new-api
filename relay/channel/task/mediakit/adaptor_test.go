@@ -267,9 +267,68 @@ func TestMediaKitRequiresServerSideCanonicalMapping(t *testing.T) {
 	require.NotNil(t, adaptor.ValidateMappedRequest(c, info))
 }
 
+func TestMediaKitParsesTopLevelCompletedWithNestedResultOutput(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResultForTask(
+		&model.Task{Status: model.TaskStatusInProgress, Progress: "30%"},
+		[]byte(`{
+			"success":true,
+			"status":"completed",
+			"result":{
+				"video_url":"https://signed.example/result?signature=secret",
+				"duration":10,
+				"fps":30,
+				"resolution":"1080p",
+				"tool_version":"standard"
+			}
+		}`),
+	)
+	require.NoError(t, err)
+	require.Equal(t, string(model.TaskStatusSuccess), result.Status)
+	require.Equal(t, "100%", result.Progress)
+	require.Equal(t, "https://signed.example/result?signature=secret", result.Url)
+	require.Equal(t, 10.0, result.Duration)
+	require.Equal(t, 30.0, result.FPS)
+	require.Equal(t, "1080p", result.Resolution)
+	require.Equal(t, "standard", result.ToolVersion)
+}
+
+func TestMediaKitParsesTopLevelNonSuccessStatusesWithoutNestedStatus(t *testing.T) {
+	tests := []struct {
+		name             string
+		upstreamStatus   string
+		expectedStatus   model.TaskStatus
+		expectedProgress string
+	}{
+		{name: "processing", upstreamStatus: "processing", expectedStatus: model.TaskStatusInProgress, expectedProgress: "30%"},
+		{name: "failed", upstreamStatus: "failed", expectedStatus: model.TaskStatusFailure, expectedProgress: "100%"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"success":true,"status":"` + test.upstreamStatus + `","result":{"task_id":"provider-task-placeholder"}}`
+			result, err := (&TaskAdaptor{}).ParseTaskResultForTask(
+				&model.Task{Status: model.TaskStatusInProgress, Progress: "30%"},
+				[]byte(body),
+			)
+			require.NoError(t, err)
+			require.Equal(t, string(test.expectedStatus), result.Status)
+			require.Equal(t, test.expectedProgress, result.Progress)
+		})
+	}
+}
+
 func TestMediaKitUnknownStatusRetainsCurrentTaskState(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	result, err := adaptor.ParseTaskResultForTask(&model.Task{Status: model.TaskStatusInProgress, Progress: "30%"}, []byte(`{"success":true,"result":{"status":"provider_new_state"}}`))
+	require.NoError(t, err)
+	require.Equal(t, string(model.TaskStatusInProgress), result.Status)
+	require.Equal(t, "30%", result.Progress)
+}
+
+func TestMediaKitMissingStatusRetainsCurrentTaskState(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResultForTask(
+		&model.Task{Status: model.TaskStatusInProgress, Progress: "30%"},
+		[]byte(`{"success":true,"result":{"task_id":"provider-task-placeholder"}}`),
+	)
 	require.NoError(t, err)
 	require.Equal(t, string(model.TaskStatusInProgress), result.Status)
 	require.Equal(t, "30%", result.Progress)
