@@ -180,7 +180,7 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, result *relaycommo
 	}
 	if status == model.TaskStatusFailure {
 		result.Url = ""
-		result.Reason = "video enhancement failed"
+		result.UpstreamErrorCode, result.Reason = sanitizeMediaKitErrorDetails(result.UpstreamErrorCode, result.Reason)
 		return safeTaskData(result, false)
 	}
 	return safeTaskData(result, false)
@@ -198,7 +198,8 @@ func safeTaskData(result *relaycommon.TaskInfo, includeActual bool) ([]byte, err
 		}
 	}
 	if model.TaskStatus(result.Status) == model.TaskStatusFailure {
-		payload["error"] = map[string]any{"code": "video_enhancement_failed", "message": "video enhancement failed"}
+		code, message := sanitizeMediaKitErrorDetails(result.UpstreamErrorCode, result.Reason)
+		payload["error"] = map[string]any{"code": code, "message": message}
 	}
 	return common.Marshal(payload)
 }
@@ -319,7 +320,23 @@ func (a *TaskAdaptor) ConvertToOpenAIVideoWithResult(task *model.Task, result *r
 		}
 	}
 	if task.Status == model.TaskStatusFailure {
-		video.Error = &dto.OpenAIVideoError{Code: "video_enhancement_failed", Message: "video enhancement failed"}
+		code, message := storedMediaKitError(task)
+		if result != nil {
+			code, message = sanitizeMediaKitErrorDetails(result.UpstreamErrorCode, result.Reason)
+		}
+		video.Error = &dto.OpenAIVideoError{Code: code, Message: message}
 	}
 	return common.Marshal(video)
+}
+
+func storedMediaKitError(task *model.Task) (string, string) {
+	if task != nil && len(task.Data) > 0 {
+		var payload map[string]any
+		if common.Unmarshal(task.Data, &payload) == nil {
+			if stored := nestedMap(payload, "error"); stored != nil {
+				return sanitizeMediaKitErrorDetails(firstString(stored, "code"), firstString(stored, "message"))
+			}
+		}
+	}
+	return sanitizeMediaKitErrorDetails("", "")
 }

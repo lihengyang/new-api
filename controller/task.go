@@ -2,6 +2,7 @@ package controller
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -64,6 +65,43 @@ func GetUserTask(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false))
 	common.ApiSuccess(c, pageInfo)
+}
+
+func GetUserTaskPreview(c *gin.Context) {
+	task, exists, err := model.GetByTaskId(c.GetInt("id"), c.Param("task_id"))
+	serveMediaKitTaskPreview(c, task, exists, err)
+}
+
+func GetTaskPreview(c *gin.Context) {
+	task, exists, err := model.GetByOnlyTaskId(c.Param("task_id"))
+	serveMediaKitTaskPreview(c, task, exists, err)
+}
+
+func serveMediaKitTaskPreview(c *gin.Context, task *model.Task, exists bool, err error) {
+	if err != nil || !exists || task == nil {
+		common.ApiErrorMsg(c, "video preview unavailable")
+		return
+	}
+	if task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMediaKit)) || task.Status != model.TaskStatusSuccess {
+		common.ApiErrorMsg(c, "video preview unavailable")
+		return
+	}
+	response, err := relay.FetchMediaKitTransientVideo(task)
+	if err != nil {
+		common.ApiErrorMsg(c, "video preview unavailable")
+		return
+	}
+	var video dto.OpenAIVideo
+	if common.Unmarshal(response, &video) != nil || video.Status != dto.VideoStatusCompleted {
+		common.ApiErrorMsg(c, "video preview unavailable")
+		return
+	}
+	videoURL, _ := video.Metadata["video_url"].(string)
+	if !strings.HasPrefix(videoURL, "https://") && !strings.HasPrefix(videoURL, "http://") {
+		common.ApiErrorMsg(c, "video preview unavailable")
+		return
+	}
+	common.ApiSuccess(c, gin.H{"video_url": videoURL, "expires_at": video.ExpiresAt})
 }
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {

@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -174,24 +175,106 @@ func TestMediaKitForwardsAllAllowedProvidedFields(t *testing.T) {
 		"metadata":{
 			"video_url":"http://media.example.com/source",
 			"tool_version":"professional",
-			"scene":"ugc",
 			"enhance_style":"natural",
 			"resolution_limit":2160,
 			"fps":30.168,
 			"bitrate_level":"high",
 			"bitrate":150000,
 			"bit_depth":10,
+			"client_request_id":"allowlist-forward-map",
 			"duration":5.967
 		}
 	}`)
 	require.Equal(t, "professional", normalized.ToolVersion)
 	require.Equal(t, "4k", normalized.ResolutionTier)
 	require.Equal(t, 30.168, normalized.FPS)
+	require.Equal(t, "allowlist-forward-map", normalized.ClientToken)
 	require.Equal(t, map[string]any{
 		"video_url": "http://media.example.com/source", "tool_version": "professional",
-		"scene": "ugc", "enhance_style": "natural", "resolution_limit": 2160,
+		"enhance_style": "natural", "resolution_limit": 2160,
 		"fps": 30.168, "bitrate_level": "high", "bitrate": 150000, "bit_depth": 10,
 	}, normalized.Forward)
+}
+
+func TestMediaKitStandardCommonSceneAcceptedAndForwarded(t *testing.T) {
+	for _, scene := range []string{"common", "ugc", "short_series", "aigc", "old_film"} {
+		t.Run(scene, func(t *testing.T) {
+			normalized, taskErr := normalizeMetadata(map[string]any{
+				"video_url": "https://media.example.com/source", "tool_version": "standard",
+				"scene": scene, "resolution": "1080p", "duration": 1.0,
+			})
+			require.Nil(t, taskErr)
+			require.Equal(t, scene, normalized.Forward["scene"])
+		})
+	}
+	_, c, info, adaptor := validateBody(t, `{
+		"model":"lsf-video-enhancement-acme",
+		"metadata":{"video_url":"https://media.example.com/source","scene":"common","resolution":"1080p","duration":1}
+	}`)
+	reader, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	require.Equal(t, "common", payload["scene"])
+}
+
+func TestMediaKitFPSExplicitRange(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fps      float64
+		accepted bool
+	}{
+		{name: "below 15", fps: 14.999, accepted: false},
+		{name: "15", fps: 15, accepted: true},
+		{name: "120", fps: 120, accepted: true},
+		{name: "above 120", fps: 120.001, accepted: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			normalized, taskErr := normalizeMetadata(map[string]any{
+				"video_url": "https://example.com/a", "resolution": "1080p", "duration": 1.0, "fps": test.fps,
+			})
+			require.Equal(t, test.accepted, taskErr == nil)
+			if test.accepted {
+				require.Equal(t, test.fps, normalized.Forward["fps"])
+			}
+		})
+	}
+}
+
+func TestMediaKitResolutionLimitContract(t *testing.T) {
+	for _, test := range []struct {
+		limit      int
+		accepted   bool
+		resolution string
+	}{
+		{limit: 1080, accepted: true, resolution: "1080p"},
+		{limit: 2160, accepted: true, resolution: "4k"},
+		{limit: 1920, accepted: false},
+	} {
+		t.Run(strconv.Itoa(test.limit), func(t *testing.T) {
+			normalized, taskErr := normalizeMetadata(map[string]any{
+				"video_url": "https://example.com/a", "resolution_limit": test.limit, "duration": 1.0,
+			})
+			require.Equal(t, test.accepted, taskErr == nil)
+			if test.accepted {
+				require.Equal(t, test.resolution, normalized.ResolutionTier)
+				require.Equal(t, test.limit, normalized.Forward["resolution_limit"])
+			}
+		})
+	}
+	_, c, info, adaptor := validateBody(t, `{
+		"model":"lsf-video-enhancement-acme",
+		"metadata":{"video_url":"https://media.example.com/source","resolution_limit":1080,"duration":1}
+	}`)
+	reader, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(forwarded, &payload))
+	require.EqualValues(t, 1080, payload["resolution_limit"])
 }
 
 func TestMediaKitDurationValidation(t *testing.T) {
@@ -226,6 +309,7 @@ func TestMediaKitRejectsInvalidFieldsAndCombinations(t *testing.T) {
 		{name: "project", mutate: func(m map[string]any) { m["ProjectName"] = "project" }},
 		{name: "both resolutions", mutate: func(m map[string]any) { m["resolution_limit"] = 1080 }},
 		{name: "no resolution", mutate: func(m map[string]any) { delete(m, "resolution") }},
+		{name: "numeric resolution", mutate: func(m map[string]any) { m["resolution"] = 1080 }},
 		{name: "standard bit depth", mutate: func(m map[string]any) { m["bit_depth"] = 8 }},
 		{name: "fps above max", mutate: func(m map[string]any) { m["fps"] = 120.001 }},
 		{name: "private URL", mutate: func(m map[string]any) { m["video_url"] = "http://127.0.0.1/video" }},
@@ -244,7 +328,24 @@ func TestMediaKitRejectsInvalidFieldsAndCombinations(t *testing.T) {
 
 	professional := map[string]any{"video_url": "https://example.com/a", "resolution": "4k", "duration": 1.0, "tool_version": "professional", "bit_depth": 12, "scene": "old_film"}
 	_, taskErr := normalizeMetadata(professional)
-	require.Nil(t, taskErr)
+	require.NotNil(t, taskErr)
+}
+
+func TestMediaKitFailureDetailsAreActionableAndSanitized(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"success":true,
+		"status":"failed",
+		"result":{"error":{"code":"INVALID_ARGUMENT","message":"resolution 1920 is unsupported; source=https://private.example/input.mp4?token=secret Authorization=Bearer private-token ProjectName=private-project queue_id=private-queue channel=private-channel group=private-group endpoint=https://internal.example/task"}}
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, "INVALID_ARGUMENT", result.UpstreamErrorCode)
+	require.Contains(t, result.Reason, "resolution 1920 is unsupported")
+	for _, forbidden := range []string{
+		"private.example", "private-token", "ProjectName", "private-project", "queue_id", "private-queue",
+		"private-channel", "private-group", "internal.example", "Authorization", "Bearer",
+	} {
+		require.NotContains(t, result.Reason, forbidden)
+	}
 }
 
 func TestMediaKitRejectsForbiddenTopLevelFields(t *testing.T) {
@@ -374,6 +475,24 @@ func TestMediaKitUncertainCreateResponseIsSanitized(t *testing.T) {
 	require.NotNil(t, taskErr)
 	require.Equal(t, "mediakit_submission_uncertain", taskErr.Code)
 	require.NotContains(t, taskErr.Message, "signed.example")
+	require.Nil(t, taskData)
+	require.Nil(t, submitResponse)
+}
+
+func TestMediaKitSubmissionErrorDetailIsActionableAndSanitized(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	response := &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(bytes.NewBufferString(`{
+		"success":false,
+		"error":{"code":"INVALID_ARGUMENT","message":"bitrate is out of range; source=https://private.example/input.mp4 Authorization=Bearer private-token queue_id=private-queue"}
+	}`))}
+	_, taskData, submitResponse, taskErr := (&TaskAdaptor{}).DoResponseNoWrite(c, response, &relaycommon.RelayInfo{})
+	require.NotNil(t, taskErr)
+	require.Equal(t, "INVALID_ARGUMENT", taskErr.Code)
+	require.Contains(t, taskErr.Message, "bitrate is out of range")
+	for _, forbidden := range []string{"private.example", "private-token", "private-queue", "Authorization", "Bearer", "queue_id"} {
+		require.NotContains(t, taskErr.Message, forbidden)
+	}
 	require.Nil(t, taskData)
 	require.Nil(t, submitResponse)
 }

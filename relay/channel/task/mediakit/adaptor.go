@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,12 @@ const (
 )
 
 var modelList = []string{CanonicalModel}
+
+var (
+	mediaKitErrorURLPattern       = regexp.MustCompile(`(?i)\b(?:https?|rtsp)://[^\s"'<>]+`)
+	mediaKitBearerPattern         = regexp.MustCompile(`(?i)\bbearer\s+[^\s,;]+`)
+	mediaKitSensitiveValuePattern = regexp.MustCompile(`(?i)\b(?:authorization|api[_-]?key|access[_-]?key|secret(?:[_-]?key)?|client[_-]?token|callback[_-]?(?:url|args)|projectname|queue[_-]?id|channel(?:[_-]?id)?|group|endpoint|routing|route)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)`)
+)
 
 type normalizedRequest struct {
 	VideoURL       string
@@ -171,8 +178,11 @@ func normalizeMetadata(metadata map[string]any) (*normalizedRequest, *dto.TaskEr
 
 	if raw, exists := metadata["scene"]; exists {
 		value, valid := stringValue(raw)
-		if !valid || !oneOf(value, "aigc", "short_series", "ugc", "old_film") {
+		if !valid || !oneOf(value, "common", "ugc", "short_series", "aigc", "old_film") {
 			return nil, invalidRequest("metadata.scene is invalid")
+		}
+		if toolVersion != "standard" {
+			return nil, invalidRequest("metadata.scene is supported only for standard tool_version")
 		}
 		forward["scene"] = value
 	}
@@ -188,8 +198,8 @@ func normalizeMetadata(metadata map[string]any) (*normalizedRequest, *dto.TaskEr
 	fpsProvided := false
 	if raw, exists := metadata["fps"]; exists {
 		value, valid := numeric(raw)
-		if !valid || !finitePositive(value) || value > 120 {
-			return nil, invalidRequest("metadata.fps must be a finite number greater than 0 and at most 120")
+		if !valid || !finitePositive(value) || value < 15 || value > 120 {
+			return nil, invalidRequest("metadata.fps must be a finite number from 15 to 120")
 		}
 		fps, fpsProvided = value, true
 		forward["fps"] = value
@@ -421,7 +431,8 @@ func (a *TaskAdaptor) DoResponseNoWrite(_ *gin.Context, resp *http.Response, inf
 		return "", nil, nil, service.TaskErrorWrapper(errors.New("invalid upstream submission response"), "invalid_response", http.StatusBadGateway)
 	}
 	if success, ok := envelope["success"].(bool); ok && !success {
-		return "", nil, nil, service.TaskErrorWrapper(errors.New("upstream task submission failed"), "upstream_submission_failed", http.StatusBadGateway)
+		code, message := mediaKitErrorDetails(envelope, nestedMap(envelope, "result"))
+		return "", nil, nil, service.TaskErrorWrapper(errors.New(message), code, http.StatusBadGateway)
 	}
 	result := nestedMap(envelope, "result")
 	if result == nil {
@@ -541,12 +552,93 @@ func parseTaskResult(body []byte) (*relaycommon.TaskInfo, error) {
 		info.Status, info.Progress = string(model.TaskStatusSuccess), taskcommon.ProgressComplete
 	case "failed", "failure", "error", "cancelled", "canceled":
 		info.Status, info.Progress = string(model.TaskStatusFailure), taskcommon.ProgressComplete
-		info.Reason = "video enhancement failed"
+		info.UpstreamErrorCode, info.Reason = mediaKitErrorDetails(envelope, result)
 	default:
 		// An undocumented provider status is deliberately left unmapped. The
 		// task-aware parser retains the current non-terminal state.
 	}
 	return info, nil
+}
+
+func mediaKitErrorDetails(envelope, result map[string]any) (string, string) {
+	sources := []map[string]any{
+		nestedMap(result, "error"),
+		nestedMap(envelope, "error"),
+		result,
+		envelope,
+	}
+	var code, message string
+	for _, source := range sources {
+		if source == nil {
+			continue
+		}
+		if code == "" {
+			code = firstString(source, "code", "error_code", "errorCode")
+		}
+		if message == "" {
+			message = firstString(source, "message", "error_message", "errorMessage", "reason", "detail")
+		}
+	}
+	if message == "" {
+		for _, source := range []map[string]any{result, envelope} {
+			if raw, ok := source["error"].(string); ok {
+				message = raw
+				break
+			}
+		}
+	}
+	return sanitizeMediaKitErrorDetails(code, message)
+}
+
+func sanitizeMediaKitErrorDetails(code, message string) (string, string) {
+	const fallbackCode = "video_enhancement_failed"
+	const fallbackMessage = "video enhancement failed"
+
+	code = strings.TrimSpace(code)
+	if code == "" || len(code) > 64 {
+		code = fallbackCode
+	} else {
+		for _, r := range code {
+			if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '_' && r != '-' && r != '.' {
+				code = fallbackCode
+				break
+			}
+		}
+		lowerCode := strings.ToLower(code)
+		for _, forbidden := range []string{"key", "token", "secret", "project", "queue", "channel", "group", "endpoint", "route"} {
+			if strings.Contains(lowerCode, forbidden) {
+				code = fallbackCode
+				break
+			}
+		}
+	}
+
+	message = strings.TrimSpace(message)
+	if strings.HasPrefix(message, "{") || strings.HasPrefix(message, "[") {
+		return code, fallbackMessage
+	}
+	message = mediaKitBearerPattern.ReplaceAllString(message, "[redacted]")
+	message = mediaKitSensitiveValuePattern.ReplaceAllString(message, "[redacted]")
+	message = mediaKitErrorURLPattern.ReplaceAllString(message, "[redacted]")
+	message = strings.Join(strings.Fields(message), " ")
+	lower := strings.ToLower(message)
+	for _, forbidden := range []string{
+		"authorization", "api_key", "api-key", "access_key", "access-key", "client_token",
+		"callback_url", "callback_args", "projectname", "queue_id", "channel_id",
+		"internal endpoint", "routing", "route=", "channel=", "group=",
+	} {
+		if strings.Contains(lower, forbidden) {
+			return code, fallbackMessage
+		}
+	}
+	if message == "" {
+		message = fallbackMessage
+	}
+	runes := []rune(message)
+	if len(runes) > 240 {
+		message = strings.TrimSpace(string(runes[:240]))
+	}
+	return code, message
 }
 
 func nestedMap(value map[string]any, key string) map[string]any {

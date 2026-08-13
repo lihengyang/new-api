@@ -275,10 +275,33 @@ export const useTaskLogsData = () => {
     setIsModalOpen(true);
   };
 
-  // 新增：打开视频预览弹窗
-  const openVideoModal = (url) => {
-    setVideoUrl(url);
-    setIsVideoModalOpen(true);
+  // 打开视频预览弹窗；MediaKit 成功任务按需获取短期 URL。
+  const openVideoModal = async (urlOrTask) => {
+    if (typeof urlOrTask === 'string') {
+      setVideoUrl(urlOrTask);
+      setIsVideoModalOpen(true);
+      return;
+    }
+    const taskId = urlOrTask?.task_id;
+    if (!taskId) {
+      showError(t('视频预览暂不可用'));
+      return;
+    }
+    const endpoint = isAdminUser
+      ? `/api/task/${encodeURIComponent(taskId)}/preview`
+      : `/api/task/self/${encodeURIComponent(taskId)}/preview`;
+    try {
+      const res = await API.get(endpoint);
+      const { success, message, data } = res.data;
+      if (success && /^https?:\/\//.test(data?.video_url || '')) {
+        setVideoUrl(data.video_url);
+        setIsVideoModalOpen(true);
+        return;
+      }
+      showError(message || t('视频预览暂不可用'));
+    } catch {
+      showError(t('视频预览暂不可用'));
+    }
   };
 
   const openAudioModal = (clips) => {

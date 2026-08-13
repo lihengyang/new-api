@@ -133,6 +133,32 @@ func TestMediaKitCompletionPolicyRejectsCriticalTierConflict(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestMediaKitFailureDetailPersistsAndReturnsInStableErrorShape(t *testing.T) {
+	task := mediaKitBillingTask(1000, 1)
+	task.TaskID = "task_public"
+	result := &relaycommon.TaskInfo{
+		Status: string(model.TaskStatusFailure), UpstreamErrorCode: "INVALID_ARGUMENT",
+		Reason: "resolution 1920 is unsupported; source=https://private.example/input.mp4?token=secret",
+	}
+	persisted, err := (&TaskAdaptor{}).ApplyTaskResultPolicy(task, result, []byte(`{"raw":"must-not-persist"}`))
+	require.NoError(t, err)
+	require.Contains(t, string(persisted), "resolution 1920 is unsupported")
+	require.NotContains(t, string(persisted), "private.example")
+	require.NotContains(t, string(persisted), "must-not-persist")
+
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.Data = persisted
+	body, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(body, &video))
+	require.NotNil(t, video.Error)
+	require.Equal(t, "INVALID_ARGUMENT", video.Error.Code)
+	require.Equal(t, result.Reason, video.Error.Message)
+	require.NotContains(t, string(body), "private.example")
+}
+
 func TestMediaKitCompletedResponseReturnsURLOnlyBeforeExpiry(t *testing.T) {
 	task := mediaKitBillingTask(1000, 1)
 	task.TaskID = "task_public"

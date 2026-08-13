@@ -502,6 +502,7 @@ func TestResolveModerationManualTaskOwnershipByAllIdentifiersWithoutCredential(t
 
 func TestResolveModerationManualPreflightCGTTaskOwnershipWithoutCredential(t *testing.T) {
 	setupModerationDiagnoseTestDB(t)
+	createdAt := time.Now().UTC()
 	lookupSQL := make([]string, 0, 1)
 	callbackName := "test:moderation-diagnose-preflight-cgt-query"
 	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
@@ -524,14 +525,14 @@ func TestResolveModerationManualPreflightCGTTaskOwnershipWithoutCredential(t *te
 	)
 	task := model.Task{
 		ID:         2658,
-		CreatedAt:  1781674348,
-		SubmitTime: 1781674348,
+		CreatedAt:  createdAt.Unix(),
+		SubmitTime: createdAt.Unix(),
 		TaskID:     "task_uM6pD77ClQftS10UjJDkLVoUonrj10Zi",
 		ChannelId:  videoChannel.Id,
 		Group:      "tenant-a",
 		Platform:   constant.TaskPlatform("doubao"),
 		PrivateData: model.TaskPrivateData{
-			UpstreamTaskID: "cgt-20260617133228-vvph2",
+			UpstreamTaskID: moderationTestCGTID(createdAt, "vvph2"),
 		},
 	}
 	require.NoError(t, model.DB.Create(&task).Error)
@@ -556,6 +557,7 @@ func TestResolveModerationManualPreflightCGTTaskOwnershipWithoutCredential(t *te
 
 func TestResolveModerationManualSimilarPreflightCGTRequiresCredential(t *testing.T) {
 	setupModerationDiagnoseTestDB(t)
+	createdAt := time.Now().UTC()
 	videoChannel := createModerationChannel(
 		t,
 		"video-bearer-placeholder",
@@ -566,21 +568,21 @@ func TestResolveModerationManualSimilarPreflightCGTRequiresCredential(t *testing
 	)
 	task := model.Task{
 		ID:         2658,
-		CreatedAt:  1781674348,
-		SubmitTime: 1781674348,
+		CreatedAt:  createdAt.Unix(),
+		SubmitTime: createdAt.Unix(),
 		TaskID:     "task_uM6pD77ClQftS10UjJDkLVoUonrj10Zi",
 		ChannelId:  videoChannel.Id,
 		Group:      "tenant-a",
 		Platform:   constant.TaskPlatform("doubao"),
 		PrivateData: model.TaskPrivateData{
-			UpstreamTaskID: "cgt-20260617133228-vvph2",
+			UpstreamTaskID: moderationTestCGTID(createdAt, "vvph2"),
 		},
 	}
 	require.NoError(t, model.DB.Create(&task).Error)
 
 	target, err := resolveModerationTarget(moderationDiagnoseRequest{
 		SourceType: moderationDiagnoseSourceManual,
-		ID:         "cgt-20260617133228-vvph3",
+		ID:         moderationTestCGTID(createdAt, "vvph3"),
 		Type:       moderationDiagnoseTypeTaskID,
 	})
 

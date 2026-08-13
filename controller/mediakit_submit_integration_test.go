@@ -5,9 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -15,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/task/mediakit"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -171,4 +174,127 @@ func TestMediaKitInvalidClientTokenRejectedBeforeBillingAndUpstream(t *testing.T
 			require.Zero(t, taskCount)
 		})
 	}
+}
+
+func TestMediaKitP1ContractRejectsBeforeBillingAndUpstream(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata map[string]any
+	}{
+		{
+			name: "professional scene",
+			metadata: map[string]any{
+				"video_url": "https://media.example.invalid/source.mp4", "tool_version": "professional",
+				"scene": "common", "resolution": "1080p", "duration": 6,
+			},
+		},
+		{
+			name: "unsupported numeric resolution limit",
+			metadata: map[string]any{
+				"video_url": "https://media.example.invalid/source.mp4", "resolution_limit": 1920, "duration": 6,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const alias = "lsf-video-enhancement-test-tenant"
+			requestBody, err := common.Marshal(map[string]any{"model": alias, "metadata": test.metadata})
+			require.NoError(t, err)
+
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+
+			mapping := `{"` + alias + `":"` + mediakit.CanonicalModel + `"}`
+			fixture := setupSeedance25SubmitFixture(t, requestBody, server.URL, mapping)
+			fixture.info.OriginModelName = alias
+			common.SetContextKey(fixture.context, constant.ContextKeyChannelType, constant.ChannelTypeMediaKit)
+
+			result, taskErr := relay.RelayTaskSubmitNoWrite(fixture.context, fixture.info)
+			require.Nil(t, result)
+			require.NotNil(t, taskErr)
+			require.Zero(t, calls.Load())
+			require.Nil(t, fixture.info.Billing)
+			require.Zero(t, fixture.info.ReservationTaskID)
+			requireSeedance25SubmitQuotaUnchanged(t, fixture)
+
+			var taskCount int64
+			require.NoError(t, model.DB.Model(&model.Task{}).Count(&taskCount).Error)
+			require.Zero(t, taskCount)
+		})
+	}
+}
+
+func TestMediaKitSuccessfulTaskDetailsPreviewUsesTransientURLWithoutPersistingIt(t *testing.T) {
+	var calls atomic.Int32
+	expiresAt := time.Now().Add(time.Hour).Unix()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/api/v1/tasks/provider-task-placeholder", r.URL.Path)
+		require.Equal(t, "Bearer placeholder-channel-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"status":"completed","result":{"duration":1,"fps":30,"resolution":"1080p","tool_version":"standard","video_url":"https://signed.example.invalid/result.mp4?signature=secret","expires_at":`+strconv.FormatInt(expiresAt, 10)+`}}`)
+	}))
+	defer server.Close()
+
+	fixture := setupSeedance25SubmitFixture(t, []byte(`{"model":"placeholder"}`), server.URL, `{}`)
+	baseURL := server.URL
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: fixture.userID, Type: constant.ChannelTypeMediaKit, Name: "private-project-channel",
+		Key: "placeholder-channel-key", BaseURL: &baseURL, Status: common.ChannelStatusEnabled,
+	}).Error)
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID: "task_public_mediakit_preview", UserId: fixture.userID, Group: "default", ChannelId: fixture.userID,
+		Quota: 3443, Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMediaKit)),
+		Action: constant.TaskActionGenerate, Status: model.TaskStatusSuccess, Progress: "100%",
+		CreatedAt: now, UpdatedAt: now, SubmitTime: now, FinishTime: now,
+		Properties: model.Properties{OriginModelName: "lsf-video-enhancement-test-tenant", UpstreamModelName: mediakit.CanonicalModel},
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "provider-task-placeholder",
+			BillingContext: &model.TaskBillingContext{
+				GroupRatio: 1, BillingFamily: mediakit.BillingFamily, BillingRuleVersion: mediakit.BillingRuleVersion,
+				OriginModelName: "lsf-video-enhancement-test-tenant",
+				BillingMetadata: map[string]any{"declared_duration": 1.0, "tool_version": "standard", "resolution_tier": "1080p"},
+			},
+		},
+		Data: []byte(`{"status":"SUCCESS","duration":1,"fps":30,"resolution":"1080p","tool_version":"standard"}`),
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/task/self/"+task.TaskID+"/preview", nil)
+	c.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	c.Set("id", fixture.userID)
+	GetUserTaskPreview(c)
+
+	var response struct {
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Equal(t, "https://signed.example.invalid/result.mp4?signature=secret", response.Data["video_url"])
+	require.EqualValues(t, expiresAt, response.Data["expires_at"])
+	require.EqualValues(t, 1, calls.Load())
+
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	require.Empty(t, stored.PrivateData.ResultURL)
+	require.NotContains(t, string(stored.Data), "signed.example.invalid")
+	require.NotContains(t, string(stored.Data), "signature")
+
+	unauthorizedRecorder := httptest.NewRecorder()
+	unauthorized, _ := gin.CreateTestContext(unauthorizedRecorder)
+	unauthorized.Request = httptest.NewRequest(http.MethodGet, "/api/task/self/"+task.TaskID+"/preview", nil)
+	unauthorized.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	unauthorized.Set("id", fixture.userID+1)
+	GetUserTaskPreview(unauthorized)
+	require.Contains(t, unauthorizedRecorder.Body.String(), `"success":false`)
+	require.EqualValues(t, 1, calls.Load())
 }

@@ -607,16 +607,26 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 }
 
 func tryMediaKitRealtimeFetch(task *model.Task) []byte {
-	if task == nil || task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMediaKit)) {
+	response, err := FetchMediaKitTransientVideo(task)
+	if err != nil {
 		return nil
+	}
+	return response
+}
+
+// FetchMediaKitTransientVideo refreshes a MediaKit task and returns the
+// short-lived customer response without persisting the upstream video URL.
+func FetchMediaKitTransientVideo(task *model.Task) ([]byte, error) {
+	if task == nil || task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMediaKit)) {
+		return nil, errors.New("MediaKit task is unavailable")
 	}
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil || channelModel.Type != constant.ChannelTypeMediaKit {
-		return nil
+		return nil, errors.New("MediaKit channel is unavailable")
 	}
 	adaptor := GetTaskAdaptor(task.Platform)
 	if adaptor == nil {
-		return nil
+		return nil, errors.New("MediaKit adaptor is unavailable")
 	}
 	baseURL := channelModel.GetBaseURL()
 	if baseURL == "" {
@@ -627,12 +637,12 @@ func tryMediaKitRealtimeFetch(task *model.Task) []byte {
 		"action":  task.Action,
 	}, channelModel.GetSetting().Proxy)
 	if err != nil || resp == nil {
-		return nil
+		return nil, errors.New("MediaKit task refresh failed")
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil
+		return nil, errors.New("MediaKit task refresh failed")
 	}
 	var result *relaycommon.TaskInfo
 	if parser, ok := adaptor.(interface {
@@ -643,28 +653,28 @@ func tryMediaKitRealtimeFetch(task *model.Task) []byte {
 		result, err = adaptor.ParseTaskResult(body)
 	}
 	if err != nil || result == nil {
-		return nil
+		return nil, errors.New("MediaKit task refresh failed")
 	}
 	if err := service.ApplyVideoTaskResult(context.Background(), adaptor, task, result, body); err != nil {
-		return nil
+		return nil, errors.New("MediaKit task refresh failed")
 	}
 	current, exists, err := model.GetByTaskId(task.UserId, task.TaskID)
 	if err != nil || !exists {
-		return nil
+		return nil, errors.New("MediaKit task refresh failed")
 	}
 	converter, ok := adaptor.(channel.OpenAIVideoTransientConverter)
 	if !ok {
-		return nil
+		return nil, errors.New("MediaKit preview is unavailable")
 	}
 	response, err := converter.ConvertToOpenAIVideoWithResult(current, result)
 	if err != nil {
-		return nil
+		return nil, errors.New("MediaKit preview is unavailable")
 	}
 	response, err = EnsureOpenAIVideoResponseBytesTaskClientRequestID(response, current)
 	if err != nil {
-		return nil
+		return nil, errors.New("MediaKit preview is unavailable")
 	}
-	return response
+	return response, nil
 }
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
