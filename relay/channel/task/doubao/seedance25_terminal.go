@@ -71,20 +71,11 @@ func seedance25BillingSnapshotValid(bc *model.TaskBillingContext) bool {
 	return ok && seedance25FinitePositive(otherRatio) && otherRatio == expectedOtherRatio
 }
 
-type seedance25ResponseTask struct {
-	Status  string `json:"status"`
-	Content struct {
-		VideoURL     string `json:"video_url"`
-		LastFrameURL string `json:"last_frame_url"`
-	} `json:"content"`
-	Usage struct {
+type seedance25UsageEnvelope struct {
+	Status string `json:"status"`
+	Usage  struct {
 		CompletionTokens json.RawMessage `json:"completion_tokens"`
-		TotalTokens      json.RawMessage `json:"total_tokens"`
 	} `json:"usage"`
-	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
 }
 
 func positiveSeedance25JSONInt(raw json.RawMessage) (int, bool) {
@@ -98,29 +89,27 @@ func positiveSeedance25JSONInt(raw json.RawMessage) (int, bool) {
 	return value, true
 }
 
-// ParseTaskResultForTask isolates strict Seedance 2.5 usage parsing from the
-// legacy Doubao task parser used by Standard, Fast, and Mini.
+// ParseTaskResultForTask keeps Seedance 2.5's strict billing-usage gate while
+// delegating valid responses to the shared parser used by Standard, Fast, and
+// Mini.
 func (a *TaskAdaptor) ParseTaskResultForTask(task *model.Task, responseBody []byte) (*relaycommon.TaskInfo, error) {
 	if !isSeedance25Task(task) {
 		return a.ParseTaskResult(responseBody)
 	}
-	var response seedance25ResponseTask
-	if err := common.Unmarshal(responseBody, &response); err != nil {
+	var envelope seedance25UsageEnvelope
+	if err := common.Unmarshal(responseBody, &envelope); err != nil {
 		return nil, fmt.Errorf("unmarshal seedance-2.5 task result failed: %w", err)
 	}
-	completionTokens, completionTokensValid := positiveSeedance25JSONInt(response.Usage.CompletionTokens)
-	totalTokens, _ := positiveSeedance25JSONInt(response.Usage.TotalTokens)
-	result := newDoubaoTaskInfo(
-		response.Status,
-		response.Content.VideoURL,
-		response.Content.LastFrameURL,
-		response.Error.Code,
-		response.Error.Message,
-		completionTokens,
-		completionTokensValid,
-		totalTokens,
-	)
-	if response.Status == "" && response.Error.Code != "" {
+	if envelope.Status == "succeeded" {
+		if _, valid := positiveSeedance25JSONInt(envelope.Usage.CompletionTokens); !valid {
+			return newDoubaoTaskInfo("succeeded", "", "", "", "", 0, false, 0), nil
+		}
+	}
+	result, err := a.ParseTaskResult(responseBody)
+	if err != nil {
+		return nil, err
+	}
+	if envelope.Status == "" && result.UpstreamErrorCode != "" {
 		result.Status = model.TaskStatusFailure
 		result.Progress = "100%"
 	}
@@ -235,6 +224,13 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, taskResult *relayc
 
 	switch model.TaskStatus(taskResult.Status) {
 	case model.TaskStatusSuccess:
+		if !taskResult.CompletionTokensValid || taskResult.CompletionTokens <= 0 {
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Progress = "100%"
+			taskResult.Url = ""
+			taskResult.Reason = "upstream success response did not contain valid completion token usage"
+			return seedance25SafeTaskData("failed", "", "", 0, "invalid_upstream_usage", taskResult.Reason, nil)
+		}
 		videoURL := strings.TrimSpace(taskResult.Url)
 		if videoURL == "" {
 			taskResult.Status = model.TaskStatusFailure
@@ -242,13 +238,6 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, taskResult *relayc
 			taskResult.Url = ""
 			taskResult.Reason = "upstream success response did not contain a video output"
 			return seedance25SafeTaskData("failed", "", "", 0, "invalid_upstream_output", taskResult.Reason, nil)
-		}
-		if !taskResult.CompletionTokensValid || taskResult.CompletionTokens <= 0 {
-			taskResult.Status = model.TaskStatusFailure
-			taskResult.Progress = "100%"
-			taskResult.Url = ""
-			taskResult.Reason = "upstream success response did not contain valid completion token usage"
-			return seedance25SafeTaskData("failed", "", "", 0, "invalid_upstream_usage", taskResult.Reason, nil)
 		}
 		if _, ok := seedance25ActualQuota(task, taskResult.CompletionTokens); !ok {
 			taskResult.Status = model.TaskStatusFailure
@@ -262,7 +251,7 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, taskResult *relayc
 			return seedance25SafeTaskData("failed", "", "", 0, "invalid_billing_context", taskResult.Reason, nil)
 		}
 		taskResult.Url = videoURL
-		return seedance25SafeTaskData("succeeded", videoURL, taskResult.LastFrameURL, taskResult.CompletionTokens, "", "", nil)
+		return responseBody, nil
 	case model.TaskStatusFailure:
 		if seedance25TaskTypeConstraint(taskResult.UpstreamErrorCode) {
 			taskResult.Reason = "request parameters are not supported for seedance-2.5"
@@ -272,9 +261,9 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, taskResult *relayc
 		taskResult.Reason = "video generation failed"
 		return seedance25SafeTaskData("failed", "", "", 0, "video_generation_failed", taskResult.Reason, nil)
 	case model.TaskStatusSubmitted, model.TaskStatusQueued:
-		return seedance25SafeTaskData("queued", "", "", 0, "", "", nil)
+		return responseBody, nil
 	case model.TaskStatusInProgress:
-		return seedance25SafeTaskData("processing", "", "", 0, "", "", nil)
+		return responseBody, nil
 	default:
 		return nil, fmt.Errorf("unsupported seedance-2.5 task status")
 	}

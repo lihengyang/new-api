@@ -579,13 +579,18 @@ func TestSeedance25ActualQuotaRejectsNonFiniteZeroAndNegativeSnapshotRatiosWitho
 	}
 }
 
-func TestSeedance25TerminalSuccessPersistsOnlyCompletionTokenUsage(t *testing.T) {
+func TestSeedance25TerminalSuccessPersistsCompleteSharedTaskRecord(t *testing.T) {
 	const responseBody = `{
 		"id":"provider_task_marker",
 		"model":"provider_model_marker",
 		"status":"succeeded",
 		"content":{"video_url":"https://example.invalid/result.mp4","last_frame_url":"https://example.invalid/last-frame.png"},
-		"usage":{"completion_tokens":100,"total_tokens":999}
+		"usage":{"completion_tokens":100,"total_tokens":999},
+		"created_at":1000,"updated_at":2000,
+		"resolution":"1080p","duration":4,"ratio":"16:9","seed":123,
+		"generate_audio":false,"framespersecond":24,"output_format":"mp4",
+		"service_tier":"default","draft":false,"priority":"normal",
+		"execution_expires_after":3600
 	}`
 	adaptor := &TaskAdaptor{}
 	result, err := adaptor.ParseTaskResultForTask(seedance25TerminalTask(false), []byte(responseBody))
@@ -600,11 +605,18 @@ func TestSeedance25TerminalSuccessPersistsOnlyCompletionTokenUsage(t *testing.T)
 	require.NoError(t, err)
 	require.EqualValues(t, model.TaskStatusSuccess, result.Status)
 	require.Equal(t, 535, adaptor.AdjustBillingOnComplete(task, result))
-	require.Contains(t, string(persisted), `"completion_tokens":100`)
-	require.Contains(t, string(persisted), `"last_frame_url":"https://example.invalid/last-frame.png"`)
-	require.NotContains(t, string(persisted), "total_tokens")
-	require.NotContains(t, string(persisted), "provider_task_marker")
-	require.NotContains(t, string(persisted), "provider_model_marker")
+	require.JSONEq(t, responseBody, string(persisted))
+	for _, expected := range []string{
+		`"id":"provider_task_marker"`, `"model":"provider_model_marker"`,
+		`"completion_tokens":100`, `"total_tokens":999`, `"resolution":"1080p"`,
+		`"created_at":1000`, `"updated_at":2000`, `"duration":4`, `"ratio":"16:9"`,
+		`"seed":123`, `"generate_audio":false`, `"framespersecond":24`,
+		`"output_format":"mp4"`, `"service_tier":"default"`, `"draft":false`,
+		`"priority":"normal"`, `"execution_expires_after":3600`,
+		`"video_url":"https://example.invalid/result.mp4"`,
+	} {
+		require.Contains(t, string(persisted), expected)
+	}
 }
 
 func TestSeedance25MalformedOrMissingSuccessUsageFailsSafe(t *testing.T) {
@@ -756,7 +768,7 @@ func TestSeedance25SubmitResponseUsesOnlyPublicIdentity(t *testing.T) {
 	upstreamID, taskData, publicResponse, taskErr := adaptor.DoResponseNoWrite(nil, resp, info)
 	require.Nil(t, taskErr)
 	require.Equal(t, "provider_task_marker", upstreamID)
-	require.NotContains(t, string(taskData), "provider_task_marker")
+	require.JSONEq(t, `{"id":"provider_task_marker"}`, string(taskData))
 	publicBody, err := common.Marshal(publicResponse.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(publicBody), "task_public_seedance25")

@@ -199,7 +199,7 @@ func requireSeedance25SubmitQuotaUnchanged(t *testing.T, fixture *seedance25Subm
 	require.Zero(t, token.UsedQuota)
 }
 
-func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) {
+func TestSeedance25RealDoubaoSubmitChainPersistsUpstreamIDAndReturnsPublicIdentity(t *testing.T) {
 	tests := []struct {
 		name                string
 		metadata            map[string]any
@@ -325,7 +325,12 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			require.Equal(t, relaycommon.Seedance25BillingFamily, task.PrivateData.BillingContext.BillingFamily)
 			require.Equal(t, tt.expectedNumerator, task.PrivateData.BillingContext.OtherRatioNumerator)
 			require.Equal(t, tt.expectedDenominator, task.PrivateData.BillingContext.OtherRatioDenominator)
+			require.Equal(t, "placeholder-upstream-task", task.PrivateData.UpstreamTaskID)
+			var submittedTaskData map[string]any
+			require.NoError(t, common.Unmarshal(task.Data, &submittedTaskData))
+			require.Equal(t, "placeholder-upstream-task", submittedTaskData["id"])
 			require.NotContains(t, string(task.Data), seedance25MappedModelPlaceholder)
+			require.NotContains(t, fixture.recorder.Body.String(), "placeholder-upstream-task")
 			require.NotContains(t, fixture.recorder.Body.String(), seedance25MappedModelPlaceholder)
 			require.Contains(t, fixture.recorder.Body.String(), seedance25TenantAliasForTest)
 

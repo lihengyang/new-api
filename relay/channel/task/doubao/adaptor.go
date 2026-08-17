@@ -484,9 +484,6 @@ func (a *TaskAdaptor) DoResponseNoWrite(c *gin.Context, resp *http.Response, inf
 	ov.Model = info.OriginModelName
 
 	taskData = responseBody
-	if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
-		taskData, _ = common.Marshal(map[string]any{"status": "queued"})
-	}
 	return dResp.ID, taskData, &channel.TaskSubmitResponse{
 		StatusCode: http.StatusOK,
 		Body:       ov,

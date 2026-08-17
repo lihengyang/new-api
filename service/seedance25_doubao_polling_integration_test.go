@@ -186,7 +186,8 @@ func newSeedance25PollingServer(t *testing.T, responseBody string, calls *atomic
 		require.Equal(t, http.MethodGet, r.Method)
 		require.True(t, strings.HasPrefix(r.URL.Path, "/api/v3/contents/generations/tasks/"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, responseBody)
+		upstreamID := strings.TrimPrefix(r.URL.Path, "/api/v3/contents/generations/tasks/")
+		_, _ = io.WriteString(w, strings.ReplaceAll(responseBody, "{{UPSTREAM_TASK_ID}}", upstreamID))
 	}))
 }
 
@@ -206,11 +207,16 @@ func TestSeedance25RealDoubaoPollingSuccessSettlesAndAuditsExactlyOnce(t *testin
 		t.Run(tt.name, func(t *testing.T) {
 			var calls atomic.Int32
 			server := newSeedance25PollingServer(t, `{
-				"id":"placeholder-upstream-task",
+				"id":"{{UPSTREAM_TASK_ID}}",
 				"model":"placeholder-upstream-model",
 				"status":"succeeded",
 				"content":{"video_url":" https://example.invalid/seedance25-result.mp4 "},
-				"usage":{"completion_tokens":100,"total_tokens":999}
+				"usage":{"completion_tokens":100,"total_tokens":999},
+				"created_at":1000,"updated_at":2000,
+				"resolution":"1080p","duration":4,"ratio":"16:9","seed":123,
+				"generate_audio":false,"framespersecond":24,"output_format":"mp4",
+				"service_tier":"default","draft":false,"priority":"normal",
+				"execution_expires_after":3600
 			}`, &calls)
 			defer server.Close()
 			fixture := seedSeedance25PollingIntegrationFixture(t, server.URL, tt.reservation)
@@ -230,8 +236,27 @@ func TestSeedance25RealDoubaoPollingSuccessSettlesAndAuditsExactlyOnce(t *testin
 			require.NoError(t, model.DB.First(&reloaded, fixture.task.ID).Error)
 			require.EqualValues(t, model.TaskStatusSuccess, reloaded.Status)
 			require.Equal(t, "https://example.invalid/seedance25-result.mp4", reloaded.PrivateData.ResultURL)
-			require.NotContains(t, string(reloaded.Data), "total_tokens")
-			require.NotContains(t, string(reloaded.Data), "placeholder-upstream")
+			require.Contains(t, string(reloaded.Data), `"total_tokens":999`)
+			require.Contains(t, string(reloaded.Data), `"model":"placeholder-upstream-model"`)
+			require.Contains(t, string(reloaded.Data), `"resolution":"1080p"`)
+			require.Contains(t, string(reloaded.Data), `"generate_audio":false`)
+			require.Contains(t, string(reloaded.Data), `"framespersecond":24`)
+			var consoleData map[string]any
+			require.NoError(t, common.Unmarshal(reloaded.Data, &consoleData))
+			require.Equal(t, fixture.upstreamID, consoleData["id"])
+			require.Equal(t, "placeholder-upstream-model", consoleData["model"])
+			require.Equal(t, "succeeded", consoleData["status"])
+			require.Equal(t, "1080p", consoleData["resolution"])
+			require.EqualValues(t, 4, consoleData["duration"])
+			require.Equal(t, "16:9", consoleData["ratio"])
+			require.EqualValues(t, 123, consoleData["seed"])
+			require.Equal(t, false, consoleData["generate_audio"])
+			require.EqualValues(t, 24, consoleData["framespersecond"])
+			require.Equal(t, "mp4", consoleData["output_format"])
+			require.Equal(t, "default", consoleData["service_tier"])
+			require.Equal(t, false, consoleData["draft"])
+			require.Equal(t, "normal", consoleData["priority"])
+			require.EqualValues(t, 3600, consoleData["execution_expires_after"])
 
 			logs := seedance25IntegrationLogs(t, fixture.userID)
 			require.Len(t, logs, 1)
@@ -251,9 +276,9 @@ func TestSeedance25RealDoubaoPollingSuccessSettlesAndAuditsExactlyOnce(t *testin
 			require.Equal(t, "https://example.invalid/seedance25-result.mp4", video.Metadata["url"])
 			require.NotNil(t, video.Usage)
 			require.Equal(t, 100, video.Usage.CompletionTokens)
-			require.Zero(t, video.Usage.TotalTokens)
+			require.Equal(t, 999, video.Usage.TotalTokens)
 			require.NotContains(t, string(publicBody), "placeholder-upstream")
-			require.NotContains(t, string(publicBody), "total_tokens")
+			require.NotContains(t, string(publicBody), "placeholder-upstream-model")
 		})
 	}
 }
