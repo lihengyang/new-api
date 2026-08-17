@@ -45,6 +45,20 @@ func seedance25TerminalTask(hasVideo bool) *model.Task {
 	}
 }
 
+func seedance25Native1080pTerminalTask(hasVideo bool) *model.Task {
+	task := seedance25TerminalTask(hasVideo)
+	numerator, denominator := int64(117), int64(107)
+	if hasVideo {
+		numerator = 70
+	}
+	ratio, _ := seedance25ExpectedOtherRatio(numerator, denominator)
+	task.PrivateData.BillingContext.BillingRuleVersion = seedance25Native1080pRuleVersion
+	task.PrivateData.BillingContext.OtherRatios = map[string]float64{"seedance_intl_billing": ratio}
+	task.PrivateData.BillingContext.OtherRatioNumerator = numerator
+	task.PrivateData.BillingContext.OtherRatioDenominator = denominator
+	return task
+}
+
 func TestResolveSeedance25BillingUsesExactTenantOriginAliasOnly(t *testing.T) {
 	for _, origin := range []string{seedance25TenantAliasForDoubaoTest, seedance25SecondTenantAliasForDoubaoTest} {
 		t.Run(origin, func(t *testing.T) {
@@ -76,16 +90,21 @@ func TestResolveSeedance25BillingUsesExactTenantOriginAliasOnly(t *testing.T) {
 
 func TestResolveSeedance25BillingVideoAndNoVideoRatios(t *testing.T) {
 	tests := []struct {
-		name          string
-		metadata      map[string]any
-		inputType     string
-		expectedRatio float64
+		name              string
+		metadata          map[string]any
+		inputType         string
+		expectedRatio     float64
+		expectedUnitPrice float64
+		expectedEffective float64
+		expectedRule      string
 	}{
-		{name: "text only", metadata: map[string]any{"resolution": "720p", "duration": 4}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1},
-		{name: "reference image", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25Image("reference_image")}}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1},
-		{name: "reference audio", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25AudioURL("https://example.invalid/reference.wav")}}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1},
-		{name: "reference video", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25Video("reference_video")}}, inputType: seedanceBillingInputVideo, expectedRatio: 64.0 / 107.0},
-		{name: "mixed references with video", metadata: map[string]any{"resolution": "720p", "duration": -1, "content": []any{seedance25Image("reference_image"), seedance25AudioURL("https://example.invalid/reference.wav"), seedance25Video("reference_video")}}, inputType: seedanceBillingInputVideo, expectedRatio: 64.0 / 107.0},
+		{name: "text only", metadata: map[string]any{"resolution": "720p", "duration": 4}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1, expectedUnitPrice: 0.0107, expectedEffective: 5.35, expectedRule: seedance25BillingRuleVersion},
+		{name: "reference image", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25Image("reference_image")}}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1, expectedUnitPrice: 0.0107, expectedEffective: 5.35, expectedRule: seedance25BillingRuleVersion},
+		{name: "reference audio", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25AudioURL("https://example.invalid/reference.wav")}}, inputType: seedanceBillingInputNoVideo, expectedRatio: 1, expectedUnitPrice: 0.0107, expectedEffective: 5.35, expectedRule: seedance25BillingRuleVersion},
+		{name: "reference video", metadata: map[string]any{"resolution": "720p", "duration": 4, "content": []any{seedance25Video("reference_video")}}, inputType: seedanceBillingInputVideo, expectedRatio: 64.0 / 107.0, expectedUnitPrice: 0.0064, expectedEffective: 3.20, expectedRule: seedance25BillingRuleVersion},
+		{name: "mixed references with video", metadata: map[string]any{"resolution": "720p", "duration": -1, "content": []any{seedance25Image("reference_image"), seedance25AudioURL("https://example.invalid/reference.wav"), seedance25Video("reference_video")}}, inputType: seedanceBillingInputVideo, expectedRatio: 64.0 / 107.0, expectedUnitPrice: 0.0064, expectedEffective: 3.20, expectedRule: seedance25BillingRuleVersion},
+		{name: "native 1080p no video", metadata: map[string]any{"resolution": "1080p", "duration": 4}, inputType: seedanceBillingInputNoVideo, expectedRatio: 117.0 / 107.0, expectedUnitPrice: 0.0117, expectedEffective: 5.85, expectedRule: seedance25Native1080pRuleVersion},
+		{name: "native 1080p reference video", metadata: map[string]any{"resolution": "1080p", "duration": 4, "content": []any{seedance25Video("reference_video")}}, inputType: seedanceBillingInputVideo, expectedRatio: 70.0 / 107.0, expectedUnitPrice: 0.0070, expectedEffective: 3.50, expectedRule: seedance25Native1080pRuleVersion},
 	}
 
 	for _, tt := range tests {
@@ -95,12 +114,22 @@ func TestResolveSeedance25BillingVideoAndNoVideoRatios(t *testing.T) {
 			require.True(t, matched)
 			require.Equal(t, tt.inputType, ctx.InputType)
 			require.InDelta(t, tt.expectedRatio, ctx.Ratio, 0.000000000001)
-			require.InDelta(t, 0.0107*tt.expectedRatio, ctx.UnitPriceUsdPerK, 0.000000000001)
-			if tt.inputType == seedanceBillingInputVideo {
-				require.InDelta(t, 3.20, seedance25ModelRatio*ctx.Ratio, 0.000000000001)
-			}
+			require.InDelta(t, tt.expectedUnitPrice, ctx.UnitPriceUsdPerK, 0.000000000001)
+			require.InDelta(t, tt.expectedEffective, seedance25ModelRatio*ctx.Ratio, 0.000000000001)
+			require.Equal(t, tt.expectedRule, ctx.RuleVersion)
 		})
 	}
+}
+
+func TestResolveSeedance25BillingRejects4K(t *testing.T) {
+	_, matched, err := ResolveSeedanceIntlBilling(
+		seedance25TenantAliasForDoubaoTest,
+		"mapped-provider-model",
+		map[string]any{"resolution": "4k", "duration": 4},
+	)
+	require.True(t, matched)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported Seedance 2.5 resolution")
 }
 
 func TestSeedance25PriceDataValidationAndRatioSnapshot(t *testing.T) {
@@ -143,6 +172,51 @@ func TestSeedance25PriceDataValidationAndRatioSnapshot(t *testing.T) {
 	info.PriceData.ModelRatio = seedance25ModelRatio
 	info.PriceData.UsePrice = true
 	require.NotNil(t, (&TaskAdaptor{}).ValidatePriceData(c, info))
+}
+
+func TestSeedance25Native1080pPriceDataUsesExactRatios(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     []any
+		numerator   int64
+		denominator int64
+		ratio       float64
+	}{
+		{name: "no video", numerator: 117, denominator: 107, ratio: 117.0 / 107.0},
+		{name: "reference video", content: []any{seedance25Video("reference_video")}, numerator: 70, denominator: 107, ratio: 70.0 / 107.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := map[string]any{"duration": 4, "resolution": "1080p"}
+			if tt.content != nil {
+				metadata["content"] = tt.content
+			}
+			c := newDoubaoRequestContext(t, relaycommon.TaskSubmitReq{Model: seedance25TenantAliasForDoubaoTest, Prompt: "p", Metadata: metadata})
+			info := &relaycommon.RelayInfo{
+				OriginModelName: seedance25TenantAliasForDoubaoTest,
+				ChannelMeta:     &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "mapped-provider-model"},
+				PriceData: types.PriceData{
+					ModelRatio:     seedance25ModelRatio,
+					GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+				},
+			}
+			adaptor := &TaskAdaptor{}
+			ratioMap := adaptor.EstimateBilling(c, info)
+			for key, value := range ratioMap {
+				info.PriceData.AddOtherRatio(key, value)
+			}
+
+			require.Nil(t, adaptor.ValidatePriceData(c, info))
+			require.InDelta(t, tt.ratio, ratioMap["seedance_intl_billing"], 0.000000000001)
+			require.Equal(t, seedance25Native1080pRuleVersion, info.PriceData.BillingRuleVersion)
+			require.Equal(t, tt.numerator, info.PriceData.OtherRatioNumerator)
+			require.Equal(t, tt.denominator, info.PriceData.OtherRatioDenominator)
+
+			info.PriceData.BillingRuleVersion = seedance25BillingRuleVersion
+			require.NotNil(t, adaptor.ValidatePriceData(c, info))
+		})
+	}
 }
 
 func TestSeedance25PriceDataRejectsNonFiniteZeroNegativeAndLooseModelRatios(t *testing.T) {
@@ -214,6 +288,10 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 		{name: "720p video reserves thirty second input", resolution: "720p", duration: 4, video: true, expectedTokens: 739029, expectedQuota: 2364893},
 		{name: "720p video plus thirty second output", resolution: "720p", duration: 30, video: true, expectedTokens: 1304168, expectedQuota: 4173338},
 		{name: "720p video automatic duration uses both maximums", resolution: "720p", duration: -1, video: true, expectedTokens: 1304168, expectedQuota: 4173338},
+		{name: "1080p four seconds", resolution: "1080p", duration: 4, expectedTokens: 195645, expectedQuota: 1144524},
+		{name: "1080p automatic duration reserves thirty seconds", resolution: "1080p", duration: -1, expectedTokens: 1467335, expectedQuota: 8583910},
+		{name: "1080p video reserves thirty second input", resolution: "1080p", duration: 4, video: true, expectedTokens: 1662980, expectedQuota: 5820430},
+		{name: "1080p video automatic duration uses both maximums", resolution: "1080p", duration: -1, video: true, expectedTokens: 2934670, expectedQuota: 10271345},
 	}
 
 	for _, tt := range tests {
@@ -272,6 +350,11 @@ func TestSeedance25ReservationPixelCeilingsCoverOfficialDimensions(t *testing.T)
 			dimensions: [][2]int{{1280, 720}, {1112, 834}, {960, 960}, {834, 1112}, {720, 1280}, {1470, 630}},
 			ceiling:    927408,
 		},
+		{
+			resolution: "1080p",
+			dimensions: [][2]int{{1920, 1080}, {1664, 1248}, {1440, 1440}, {1248, 1664}, {1080, 1920}, {2206, 946}},
+			ceiling:    2086876,
+		},
 	}
 
 	for _, tt := range tests {
@@ -291,7 +374,7 @@ func TestSeedance25ReservationPixelCeilingsCoverOfficialDimensions(t *testing.T)
 		})
 	}
 
-	_, ok := seedance25ReservationPixelCeiling("1080p")
+	_, ok := seedance25ReservationPixelCeiling("4k")
 	require.False(t, ok)
 }
 
@@ -306,6 +389,7 @@ func TestSeedance25AdaptiveAnd16By9UseSameReservationCeiling(t *testing.T) {
 	}{
 		{resolution: "480p", fixedWidth: 854, fixedHeight: 480},
 		{resolution: "720p", fixedWidth: 1280, fixedHeight: 720},
+		{resolution: "1080p", fixedWidth: 1920, fixedHeight: 1080},
 	}
 
 	for _, tt := range tests {
@@ -439,6 +523,20 @@ func TestSeedance25ActualQuotaUsesCompletionTokensAndSavedExactRatios(t *testing
 
 	noVideo.PrivateData.BillingContext.ModelRatio = 5.34
 	_, ok = seedance25ActualQuota(noVideo, 100)
+	require.False(t, ok)
+
+	native1080pNoVideo := seedance25Native1080pTerminalTask(false)
+	quota, ok = seedance25ActualQuota(native1080pNoVideo, 100)
+	require.True(t, ok)
+	require.Equal(t, 585, quota)
+
+	native1080pVideo := seedance25Native1080pTerminalTask(true)
+	quota, ok = seedance25ActualQuota(native1080pVideo, 100)
+	require.True(t, ok)
+	require.Equal(t, 350, quota)
+
+	native1080pNoVideo.PrivateData.BillingContext.BillingRuleVersion = seedance25BillingRuleVersion
+	_, ok = seedance25ActualQuota(native1080pNoVideo, 100)
 	require.False(t, ok)
 }
 

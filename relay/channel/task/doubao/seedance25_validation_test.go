@@ -121,7 +121,7 @@ func TestValidateSeedance25ExactAliasAndLookalikes(t *testing.T) {
 }
 
 func TestValidateSeedance25Resolution(t *testing.T) {
-	for _, resolution := range []string{"480p", "720p"} {
+	for _, resolution := range []string{"480p", "720p", "1080p"} {
 		t.Run("accept_"+resolution, func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["resolution"] = resolution
@@ -142,7 +142,7 @@ func TestValidateSeedance25Resolution(t *testing.T) {
 		require.Equal(t, "720p", req.Metadata["resolution"])
 	})
 
-	for _, resolution := range []any{"1080p", "4k", "4K", "480", "720", "", nil} {
+	for _, resolution := range []any{"4k", "4K", "480", "720", "1080", "", nil} {
 		t.Run("reject", func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["resolution"] = resolution

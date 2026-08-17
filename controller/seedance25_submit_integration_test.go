@@ -214,6 +214,11 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			expectedRatio: "16:9", expectedNumerator: 1, expectedDenominator: 1,
 		},
 		{
+			name:          "native 1080p text only",
+			metadata:      map[string]any{"duration": 4, "resolution": "1080p", "ratio": "16:9", "generate_audio": false},
+			expectedRatio: "16:9", expectedNumerator: 117, expectedDenominator: 107,
+		},
+		{
 			name:          "first frame",
 			metadata:      map[string]any{"duration": 4, "resolution": "720p", "content": []any{seedance25SubmitImage("first_frame")}, "generate_audio": false},
 			expectedRoles: []string{"first_frame"}, expectedRatio: "adaptive", expectedNumerator: 1, expectedDenominator: 1,
@@ -234,9 +239,14 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			expectedRoles: []string{"reference_video"}, expectedRatio: "adaptive", expectedNumerator: 64, expectedDenominator: 107,
 		},
 		{
+			name:          "native 1080p reference video",
+			metadata:      map[string]any{"duration": 4, "resolution": "1080p", "ratio": "adaptive", "content": []any{seedance25SubmitVideo("reference_video")}, "generate_audio": false},
+			expectedRoles: []string{"reference_video"}, expectedRatio: "adaptive", expectedNumerator: 70, expectedDenominator: 107,
+		},
+		{
 			name: "mixed editing references with p1 output controls",
 			metadata: map[string]any{
-				"duration": -1, "resolution": "720p", "ratio": "adaptive",
+				"duration": -1, "resolution": "1080p", "ratio": "adaptive",
 				"content": []any{
 					seedance25SubmitImage("reference_image"),
 					seedance25SubmitVideo("reference_video"),
@@ -244,7 +254,7 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 				},
 				"generate_audio": false, "output_format": "mov", "return_last_frame": true, "watermark": false,
 			},
-			expectedRoles: []string{"reference_image", "reference_video", "reference_audio"}, expectedRatio: "adaptive", expectedNumerator: 64, expectedDenominator: 107,
+			expectedRoles: []string{"reference_image", "reference_video", "reference_audio"}, expectedRatio: "adaptive", expectedNumerator: 70, expectedDenominator: 107,
 		},
 	}
 
@@ -274,6 +284,7 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			payload := decodeSeedance25SubmitPayload(t, upstreamBody)
 			require.Equal(t, seedance25MappedModelPlaceholder, payload["model"])
 			require.NotEqual(t, seedance25TenantAliasForTest, payload["model"])
+			require.Equal(t, tt.metadata["resolution"], payload["resolution"])
 			require.Equal(t, false, payload["generate_audio"])
 			require.Equal(t, tt.expectedRatio, payload["ratio"])
 			require.Equal(t, float64(tt.metadata["duration"].(int)), payload["duration"])
@@ -334,6 +345,35 @@ func TestSeedance25RealDoubaoSubmitChainPersistsSanitizedSnapshot(t *testing.T) 
 			require.Equal(t, result.Quota, token.UsedQuota)
 		})
 	}
+}
+
+func TestSeedance25RealDoubaoSubmitRejects4KBeforeTaskBillingAndUpstream(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	requestBody := seedance25SubmitRequestBody(t, map[string]any{"duration": 4, "resolution": "4k"})
+	mapping := `{"` + seedance25TenantAliasForTest + `":"` + seedance25MappedModelPlaceholder + `"}`
+	fixture := setupSeedance25SubmitFixture(t, requestBody, server.URL, mapping)
+
+	result, taskErr := relay.RelayTaskSubmit(fixture.context, fixture.info)
+	require.Nil(t, result)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_request_error", taskErr.Code)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.Nil(t, fixture.info.Billing)
+	require.Zero(t, upstreamCalls.Load())
+	requireSeedance25SubmitQuotaUnchanged(t, fixture)
+
+	var taskCount int64
+	var logCount int64
+	require.NoError(t, fixture.db.Model(&model.Task{}).Count(&taskCount).Error)
+	require.NoError(t, fixture.db.Model(&model.Log{}).Count(&logCount).Error)
+	require.Zero(t, taskCount)
+	require.Zero(t, logCount)
 }
 
 func TestSeedance25RealDoubaoSubmitRejectsMissingOrBlankMappingBeforeBilling(t *testing.T) {

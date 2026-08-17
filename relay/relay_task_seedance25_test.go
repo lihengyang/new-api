@@ -21,7 +21,7 @@ func TestRelayTaskSubmitRejectsSeedance25InvalidRequestsBeforeBilling(t *testing
 		body string
 	}{
 		{name: "missing duration", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"resolution":"720p"}}`},
-		{name: "unsupported resolution", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"1080p"}}`},
+		{name: "unsupported resolution", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"4k"}}`},
 		{name: "disabled false field", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p","camera_fixed":false}}`},
 	}
 

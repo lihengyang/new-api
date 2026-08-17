@@ -309,8 +309,8 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 	resolution := "720p"
 	if rawResolution, ok := metadata["resolution"]; ok {
 		if rawJSONIsNull(rawResolution) || common.Unmarshal(rawResolution, &resolution) != nil ||
-			(resolution != "480p" && resolution != "720p") {
-			return seedance25InvalidRequest("metadata.resolution must be 480p or 720p")
+			(resolution != "480p" && resolution != "720p" && resolution != "1080p") {
+			return seedance25InvalidRequest("metadata.resolution must be 480p, 720p, or 1080p")
 		}
 	}
 

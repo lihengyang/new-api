@@ -20,9 +20,10 @@ const (
 	seedanceBillingInputVideo   = "video_input"
 	seedanceBillingInputNoVideo = "no_video_input"
 
-	seedanceBillingRuleVersion     = "byteplus_seedance_2_0_intl_2026_06_4k"
-	seedanceMiniBillingRuleVersion = "byteplus_seedance_2_0_mini_intl_2026_06_rc1"
-	seedance25BillingRuleVersion   = "byteplus_seedance_2_5_intl_2026_08_p0"
+	seedanceBillingRuleVersion       = "byteplus_seedance_2_0_intl_2026_06_4k"
+	seedanceMiniBillingRuleVersion   = "byteplus_seedance_2_0_mini_intl_2026_06_rc1"
+	seedance25BillingRuleVersion     = "byteplus_seedance_2_5_intl_2026_08_p0"
+	seedance25Native1080pRuleVersion = "byteplus_seedance_2_5_intl_2026_08_native_1080p"
 )
 
 type SeedanceBillingContext struct {
@@ -140,6 +141,22 @@ var seedanceIntlBillingProfiles = []seedanceBillingProfile{
 		Ratio:            64.0 / 107.0,
 		RuleVersion:      seedance25BillingRuleVersion,
 	},
+	{
+		Family:           seedanceBillingFamily25,
+		HasVideoInput:    false,
+		ResolutionGroup:  seedanceBillingResolution1080p,
+		UnitPriceUsdPerK: 0.0117,
+		Ratio:            117.0 / 107.0,
+		RuleVersion:      seedance25Native1080pRuleVersion,
+	},
+	{
+		Family:           seedanceBillingFamily25,
+		HasVideoInput:    true,
+		ResolutionGroup:  seedanceBillingResolution1080p,
+		UnitPriceUsdPerK: 0.0070,
+		Ratio:            70.0 / 107.0,
+		RuleVersion:      seedance25Native1080pRuleVersion,
+	},
 }
 
 // resolveSeedanceBillingFamily recognizes released Seedance 2.0 video-generation
@@ -213,9 +230,31 @@ func normalizeSeedance25BillingResolution(metadata map[string]interface{}) (reso
 	switch raw {
 	case "480p", "720p":
 		return raw, seedanceBillingResolution480p720p, nil
+	case "1080p":
+		return raw, seedanceBillingResolution1080p, nil
 	default:
-		return "", "", fmt.Errorf("unsupported Seedance 2.5 resolution %q; supported values are 480p and 720p", raw)
+		return "", "", fmt.Errorf("unsupported Seedance 2.5 resolution %q; supported values are 480p, 720p, and 1080p", raw)
 	}
+}
+
+func seedance25BillingRatioFraction(resolutionGroup, inputType string) (int64, int64, bool) {
+	switch resolutionGroup {
+	case seedanceBillingResolution480p720p:
+		if inputType == seedanceBillingInputVideo {
+			return 64, 107, true
+		}
+		if inputType == seedanceBillingInputNoVideo {
+			return 1, 1, true
+		}
+	case seedanceBillingResolution1080p:
+		if inputType == seedanceBillingInputVideo {
+			return 70, 107, true
+		}
+		if inputType == seedanceBillingInputNoVideo {
+			return 117, 107, true
+		}
+	}
+	return 0, 0, false
 }
 
 func metadataString(metadata map[string]interface{}, key string) string {

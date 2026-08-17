@@ -32,19 +32,39 @@ func seedance25ExpectedOtherRatio(numerator, denominator int64) (float64, bool) 
 		return 1, true
 	case numerator == 64 && denominator == 107:
 		return 64.0 / 107.0, true
+	case numerator == 117 && denominator == 107:
+		return 117.0 / 107.0, true
+	case numerator == 70 && denominator == 107:
+		return 70.0 / 107.0, true
 	default:
 		return 0, false
 	}
 }
 
+func seedance25ExpectedBillingRuleVersion(numerator, denominator int64) (string, bool) {
+	switch {
+	case numerator == 1 && denominator == 1,
+		numerator == 64 && denominator == 107:
+		return seedance25BillingRuleVersion, true
+	case numerator == 117 && denominator == 107,
+		numerator == 70 && denominator == 107:
+		return seedance25Native1080pRuleVersion, true
+	default:
+		return "", false
+	}
+}
+
 func seedance25BillingSnapshotValid(bc *model.TaskBillingContext) bool {
-	if bc == nil || bc.BillingRuleVersion != seedance25BillingRuleVersion ||
-		bc.BillingFamily != relaycommon.Seedance25BillingFamily ||
+	if bc == nil || bc.BillingFamily != relaycommon.Seedance25BillingFamily ||
 		!seedance25ApprovedModelRatio(bc.ModelRatio) || !seedance25FinitePositive(bc.GroupRatio) {
 		return false
 	}
 	expectedOtherRatio, ok := seedance25ExpectedOtherRatio(bc.OtherRatioNumerator, bc.OtherRatioDenominator)
 	if !ok || len(bc.OtherRatios) != 1 {
+		return false
+	}
+	expectedRuleVersion, ok := seedance25ExpectedBillingRuleVersion(bc.OtherRatioNumerator, bc.OtherRatioDenominator)
+	if !ok || bc.BillingRuleVersion != expectedRuleVersion {
 		return false
 	}
 	otherRatio, ok := bc.OtherRatios["seedance_intl_billing"]
@@ -116,11 +136,15 @@ func (a *TaskAdaptor) ValidatePriceData(_ *gin.Context, info *relaycommon.RelayI
 		priceData.OtherRatioNumerator,
 		priceData.OtherRatioDenominator,
 	)
+	expectedRuleVersion, ruleVersionOK := seedance25ExpectedBillingRuleVersion(
+		priceData.OtherRatioNumerator,
+		priceData.OtherRatioDenominator,
+	)
 	otherRatio, hasOtherRatio := priceData.OtherRatios["seedance_intl_billing"]
 	if priceData.UsePrice || !seedance25ApprovedModelRatio(priceData.ModelRatio) ||
 		!seedance25FinitePositive(priceData.GroupRatioInfo.GroupRatio) ||
 		priceData.BillingFamily != relaycommon.Seedance25BillingFamily ||
-		priceData.BillingRuleVersion != seedance25BillingRuleVersion ||
+		!ruleVersionOK || priceData.BillingRuleVersion != expectedRuleVersion ||
 		!ratioSnapshotOK || len(priceData.OtherRatios) != 1 || !hasOtherRatio ||
 		!seedance25FinitePositive(otherRatio) || otherRatio != expectedOtherRatio {
 		return service.TaskErrorWrapperLocal(

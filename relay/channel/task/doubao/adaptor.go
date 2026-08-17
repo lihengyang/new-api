@@ -120,9 +120,10 @@ const (
 )
 
 const (
-	seedance25ReservationFPS           = 24
-	seedance25ReservationMaxPixels480p = 428544
-	seedance25ReservationMaxPixels720p = 927408
+	seedance25ReservationFPS            = 24
+	seedance25ReservationMaxPixels480p  = 428544
+	seedance25ReservationMaxPixels720p  = 927408
+	seedance25ReservationMaxPixels1080p = 2086876
 )
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -215,12 +216,12 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		if billingCtx.Family == seedanceBillingFamily25 {
 			info.PriceData.BillingFamily = billingCtx.Family
 			info.PriceData.BillingRuleVersion = billingCtx.RuleVersion
-			info.PriceData.OtherRatioNumerator = 1
-			info.PriceData.OtherRatioDenominator = 1
-			if billingCtx.InputType == seedanceBillingInputVideo {
-				info.PriceData.OtherRatioNumerator = 64
-				info.PriceData.OtherRatioDenominator = 107
+			numerator, denominator, ok := seedance25BillingRatioFraction(billingCtx.ResolutionGroup, billingCtx.InputType)
+			if !ok {
+				return nil
 			}
+			info.PriceData.OtherRatioNumerator = numerator
+			info.PriceData.OtherRatioDenominator = denominator
 		}
 		return map[string]float64{
 			"seedance_intl_billing": billingCtx.Ratio,
@@ -306,6 +307,8 @@ func seedance25ReservationPixelCeiling(resolution string) (int, bool) {
 		return seedance25ReservationMaxPixels480p, true
 	case "720p":
 		return seedance25ReservationMaxPixels720p, true
+	case "1080p":
+		return seedance25ReservationMaxPixels1080p, true
 	default:
 		return 0, false
 	}
