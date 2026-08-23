@@ -285,10 +285,11 @@ func TestSeedance25RealDoubaoPollingSuccessSettlesAndAuditsExactlyOnce(t *testin
 
 func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testing.T) {
 	tests := []struct {
-		name         string
-		responseBody string
-		mutate       func(*model.Task)
-		expectedCode string
+		name            string
+		responseBody    string
+		mutate          func(*model.Task)
+		expectedCode    string
+		expectedMessage string
 	}{
 		{name: "usage missing", responseBody: `{"status":"succeeded","content":{"video_url":"https://example.invalid/should-not-publish.mp4"},"usage":{"total_tokens":999}}`, expectedCode: "invalid_upstream_usage"},
 		{name: "usage null", responseBody: `{"status":"succeeded","content":{"video_url":"https://example.invalid/should-not-publish.mp4"},"usage":{"completion_tokens":null}}`, expectedCode: "invalid_upstream_usage"},
@@ -299,7 +300,9 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 		{name: "url missing", responseBody: `{"status":"succeeded","usage":{"completion_tokens":100}}`, expectedCode: "invalid_upstream_output"},
 		{name: "url empty", responseBody: `{"status":"succeeded","content":{"video_url":""},"usage":{"completion_tokens":100}}`, expectedCode: "invalid_upstream_output"},
 		{name: "url blank", responseBody: `{"status":"succeeded","content":{"video_url":"  \t "},"usage":{"completion_tokens":100}}`, expectedCode: "invalid_upstream_output"},
-		{name: "task type constraint", responseBody: `{"status":"failed","error":{"code":"InvalidParameter.TaskTypeConstraint","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "invalid_request_error"},
+		{name: "task type constraint", responseBody: `{"status":"failed","error":{"code":"InvalidParameter.TaskTypeConstraint","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "InvalidParameter.TaskTypeConstraint", expectedMessage: "The request parameters are incompatible with the task type identified by the model. Update the parameters for that task type and try again."},
+		{name: "task type mismatch", responseBody: `{"status":"failed","error":{"code":"InvalidParameter.TaskTypeMismatch","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "InvalidParameter.TaskTypeMismatch", expectedMessage: "The task type identified by the model does not match the specified value. Revise the prompt and input assets, then try again."},
+		{name: "audio policy violation", responseBody: `{"status":"failed","error":{"code":"OutputAudioSensitiveContentDetected.PolicyViolation","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "OutputAudioSensitiveContentDetected.PolicyViolation", expectedMessage: "The generated audio may be related to copyright restrictions. Please replace the input content and try again."},
 		{name: "ordinary upstream failure", responseBody: `{"status":"failed","error":{"code":"ProviderFailurePlaceholder","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "video_generation_failed"},
 		{name: "missing billing snapshot", responseBody: `{"status":"succeeded","content":{"video_url":"https://example.invalid/should-not-publish.mp4"},"usage":{"completion_tokens":100}}`, mutate: func(task *model.Task) { task.PrivateData.BillingContext = nil }, expectedCode: "invalid_billing_context"},
 		{name: "damaged billing snapshot", responseBody: `{"status":"succeeded","content":{"video_url":"https://example.invalid/should-not-publish.mp4"},"usage":{"completion_tokens":100}}`, mutate: func(task *model.Task) { task.PrivateData.BillingContext.ModelRatio = 5.34 }, expectedCode: "invalid_billing_context"},
@@ -385,6 +388,14 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 			require.NotContains(t, string(publicBody), "placeholder-upstream")
 			require.NotContains(t, string(publicBody), "raw-upstream-diagnostic-placeholder")
 			require.NotContains(t, string(publicBody), "should-not-publish")
+			require.NotNil(t, video.Error)
+			require.Equal(t, tt.expectedCode, video.Error.Code)
+			if tt.expectedMessage != "" {
+				require.Equal(t, tt.expectedMessage, reloaded.FailReason)
+				require.Equal(t, tt.expectedMessage, video.Error.Message)
+				require.NotNil(t, video.Error.Retryable)
+				require.False(t, *video.Error.Retryable)
+			}
 		})
 	}
 }
@@ -431,7 +442,7 @@ func TestSeedance25AsyncMediaFailuresReleaseReservationAndStaySanitized(t *testi
 
 func TestSeedance25RealDoubaoPollingCASLoserDoesNotRepeatFinancialAction(t *testing.T) {
 	var calls atomic.Int32
-	server := newSeedance25PollingServer(t, `{"status":"succeeded","content":{"video_url":"https://example.invalid/loser-output.mp4"},"usage":{"completion_tokens":100}}`, &calls)
+	server := newSeedance25PollingServer(t, `{"status":"failed","error":{"code":"InvalidParameter.TaskTypeMismatch","message":"raw-upstream-diagnostic-placeholder"}}`, &calls)
 	defer server.Close()
 	const reservation = 600
 	fixture := seedSeedance25PollingIntegrationFixture(t, server.URL, reservation)

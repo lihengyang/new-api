@@ -162,11 +162,11 @@ func (a *seedance25PollingAdaptor) ApplyTaskResultPolicy(_ *model.Task, result *
 		})
 	}
 	if result.Status == model.TaskStatusFailure {
-		result.Reason = "request parameters are not supported for seedance-2.5"
+		result.Reason = "The request parameters are incompatible with the task type identified by the model. Update the parameters for that task type and try again."
 		return common.Marshal(map[string]any{
 			"status": "failed",
 			"error": map[string]any{
-				"code":    "invalid_request_error",
+				"code":    result.UpstreamErrorCode,
 				"message": result.Reason,
 			},
 		})
@@ -231,8 +231,8 @@ func TestSeedance25TaskTypeConstraintRefundsExactlyOnceAcrossReplay(t *testing.T
 
 	require.Equal(t, 1, adaptor.fetchCount)
 	require.EqualValues(t, model.TaskStatusFailure, task.Status)
-	require.Equal(t, "request parameters are not supported for seedance-2.5", task.FailReason)
-	require.Contains(t, string(task.Data), "invalid_request_error")
+	require.Equal(t, "The request parameters are incompatible with the task type identified by the model. Update the parameters for that task type and try again.", task.FailReason)
+	require.Contains(t, string(task.Data), "InvalidParameter.TaskTypeConstraint")
 	require.NotContains(t, string(task.Data), "raw provider diagnostic marker")
 	require.Equal(t, 10400, getUserQuota(t, 45))
 	require.Equal(t, int64(1), countLogs(t))

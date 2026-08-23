@@ -246,7 +246,7 @@ func TestSeedance25RealDoubaoSubmitChainPersistsUpstreamIDAndReturnsPublicIdenti
 		{
 			name: "mixed editing references with p1 output controls",
 			metadata: map[string]any{
-				"duration": -1, "resolution": "1080p", "ratio": "adaptive",
+				"duration": -1, "resolution": "1080p", "ratio": "adaptive", "omni_reference_task_type": "edit",
 				"content": []any{
 					seedance25SubmitImage("reference_image"),
 					seedance25SubmitVideo("reference_video"),
@@ -293,7 +293,7 @@ func TestSeedance25RealDoubaoSubmitChainPersistsUpstreamIDAndReturnsPublicIdenti
 			require.NotContains(t, payload, "frames")
 			require.NotContains(t, payload, "draft")
 			require.NotContains(t, payload, "service_tier")
-			for _, field := range []string{"output_format", "return_last_frame", "watermark"} {
+			for _, field := range []string{"omni_reference_task_type", "output_format", "return_last_frame", "watermark"} {
 				expected, present := tt.metadata[field]
 				if present {
 					require.Equal(t, expected, payload[field])

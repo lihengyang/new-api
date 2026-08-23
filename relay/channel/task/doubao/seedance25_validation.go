@@ -38,15 +38,23 @@ var seedance25AllowedRootFields = map[string]struct{}{
 }
 
 var seedance25AllowedMetadataFields = map[string]struct{}{
-	"client_request_id": {},
-	"content":           {},
-	"duration":          {},
-	"generate_audio":    {},
-	"output_format":     {},
-	"ratio":             {},
-	"resolution":        {},
-	"return_last_frame": {},
-	"watermark":         {},
+	"client_request_id":        {},
+	"content":                  {},
+	"duration":                 {},
+	"generate_audio":           {},
+	"omni_reference_task_type": {},
+	"output_format":            {},
+	"ratio":                    {},
+	"resolution":               {},
+	"return_last_frame":        {},
+	"watermark":                {},
+}
+
+var seedance25AllowedOmniReferenceTaskTypes = map[string]struct{}{
+	"auto":      {},
+	"reference": {},
+	"edit":      {},
+	"extend":    {},
 }
 
 var seedance25ForbiddenFields = map[string]struct{}{
@@ -295,6 +303,16 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 	}
 	if req.Metadata == nil {
 		req.Metadata = make(map[string]interface{})
+	}
+	if rawTaskType, ok := metadata["omni_reference_task_type"]; ok {
+		var taskType string
+		if rawJSONIsNull(rawTaskType) || common.Unmarshal(rawTaskType, &taskType) != nil {
+			return seedance25InvalidRequest("metadata.omni_reference_task_type must be auto, reference, edit, or extend")
+		}
+		if _, allowed := seedance25AllowedOmniReferenceTaskTypes[taskType]; !allowed {
+			return seedance25InvalidRequest("metadata.omni_reference_task_type must be auto, reference, edit, or extend")
+		}
+		req.Metadata["omni_reference_task_type"] = taskType
 	}
 
 	rawDuration, ok := metadata["duration"]

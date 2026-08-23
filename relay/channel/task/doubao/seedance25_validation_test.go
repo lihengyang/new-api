@@ -396,6 +396,50 @@ func TestSeedance25ReferenceOrderAndP1ParametersReachUpstreamUnchanged(t *testin
 	require.Equal(t, "text", upstreamContent[len(content)].(map[string]any)["type"])
 }
 
+func TestValidateSeedance25OmniReferenceTaskTypeReachesUpstreamUnchanged(t *testing.T) {
+	for _, taskType := range []string{"auto", "reference", "edit", "extend"} {
+		t.Run(taskType, func(t *testing.T) {
+			metadata := validSeedance25Metadata()
+			metadata["content"] = []any{seedance25Image("reference_image")}
+			metadata["omni_reference_task_type"] = taskType
+
+			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+			require.NoError(t, err)
+			info.ChannelMeta = &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "mapped-provider-model"}
+			reader, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+			require.NoError(t, err)
+			body, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(body, &payload))
+			require.Equal(t, taskType, payload["omni_reference_task_type"])
+		})
+	}
+
+	t.Run("omitted", func(t *testing.T) {
+		metadata := validSeedance25Metadata()
+		metadata["content"] = []any{seedance25Image("reference_image")}
+		c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.NoError(t, err)
+		info.ChannelMeta = &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "mapped-provider-model"}
+		reader, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+		require.NoError(t, err)
+		body, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		var payload map[string]any
+		require.NoError(t, common.Unmarshal(body, &payload))
+		require.NotContains(t, payload, "omni_reference_task_type")
+	})
+
+	for _, invalid := range []any{"", "AUTO", " auto", "other", nil, 1, false} {
+		metadata := validSeedance25Metadata()
+		metadata["content"] = []any{seedance25Image("reference_image")}
+		metadata["omni_reference_task_type"] = invalid
+		_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.Error(t, err)
+	}
+}
+
 func TestValidateSeedance25P1ParameterTypesAndMediaSchemes(t *testing.T) {
 	for _, outputFormat := range []string{"mp4", "mov"} {
 		metadata := validSeedance25Metadata()

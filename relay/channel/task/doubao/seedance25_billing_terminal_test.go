@@ -687,37 +687,55 @@ func TestSeedance25StrictUsageParserDoesNotChangeLegacyParser(t *testing.T) {
 	require.EqualValues(t, model.TaskStatusFailure, result.Status)
 }
 
-func TestSeedance25TaskTypeConstraintIsSanitizedAndNonRetryable(t *testing.T) {
-	const body = `{
-		"id":"provider_task_marker",
-		"model":"provider_model_marker",
-		"status":"failed",
-		"error":{"code":"InvalidParameter.TaskTypeConstraint","message":"raw provider diagnostic with internal-project-marker"}
-	}`
-	adaptor := &TaskAdaptor{}
-	result, err := adaptor.ParseTaskResultForTask(seedance25TerminalTask(false), []byte(body))
-	require.NoError(t, err)
-	persisted, err := adaptor.ApplyTaskResultPolicy(seedance25TerminalTask(false), result, []byte(body))
-	require.NoError(t, err)
-	require.EqualValues(t, model.TaskStatusFailure, result.Status)
-	require.Equal(t, "request parameters are not supported for seedance-2.5", result.Reason)
-	require.Contains(t, string(persisted), `"code":"invalid_request_error"`)
-	require.Contains(t, string(persisted), `"retryable":false`)
-	require.NotContains(t, string(persisted), "InvalidParameter.TaskTypeConstraint")
-	require.NotContains(t, string(persisted), "internal-project-marker")
-	require.NotContains(t, string(persisted), "provider_task_marker")
-	require.NotContains(t, string(persisted), "provider_model_marker")
+func TestSeedance25AllowedTerminalErrorsAreSanitizedAndNonRetryable(t *testing.T) {
+	tests := []struct {
+		code    string
+		message string
+	}{
+		{code: "InvalidParameter.TaskTypeConstraint", message: "The request parameters are incompatible with the task type identified by the model. Update the parameters for that task type and try again."},
+		{code: "InvalidParameter.TaskTypeMismatch", message: "The task type identified by the model does not match the specified value. Revise the prompt and input assets, then try again."},
+		{code: "OutputAudioSensitiveContentDetected.PolicyViolation", message: "The generated audio may be related to copyright restrictions. Please replace the input content and try again."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			body := `{
+				"id":"provider_task_marker",
+				"model":"provider_model_marker",
+				"status":"failed",
+				"error":{"code":"` + tt.code + `","message":"raw provider diagnostic with internal-project-marker and request-id-marker"}
+			}`
+			adaptor := &TaskAdaptor{}
+			result, err := adaptor.ParseTaskResultForTask(seedance25TerminalTask(false), []byte(body))
+			require.NoError(t, err)
+			persisted, err := adaptor.ApplyTaskResultPolicy(seedance25TerminalTask(false), result, []byte(body))
+			require.NoError(t, err)
+			require.EqualValues(t, model.TaskStatusFailure, result.Status)
+			require.Equal(t, tt.message, result.Reason)
 
-	task := seedance25TerminalTask(false)
-	task.Status = model.TaskStatusFailure
-	task.Data = persisted
-	publicBody, err := adaptor.ConvertToOpenAIVideo(task)
-	require.NoError(t, err)
-	var publicVideo dto.OpenAIVideo
-	require.NoError(t, common.Unmarshal(publicBody, &publicVideo))
-	require.NotNil(t, publicVideo.Error)
-	require.NotNil(t, publicVideo.Error.Retryable)
-	require.False(t, *publicVideo.Error.Retryable)
+			var safeData responseTask
+			require.NoError(t, common.Unmarshal(persisted, &safeData))
+			require.Equal(t, tt.code, safeData.Error.Code)
+			require.Equal(t, tt.message, safeData.Error.Message)
+			require.NotNil(t, safeData.Error.Retryable)
+			require.False(t, *safeData.Error.Retryable)
+			for _, forbidden := range []string{"internal-project-marker", "request-id-marker", "provider_task_marker", "provider_model_marker"} {
+				require.NotContains(t, string(persisted), forbidden)
+			}
+
+			task := seedance25TerminalTask(false)
+			task.Status = model.TaskStatusFailure
+			task.Data = persisted
+			publicBody, err := adaptor.ConvertToOpenAIVideo(task)
+			require.NoError(t, err)
+			var publicVideo dto.OpenAIVideo
+			require.NoError(t, common.Unmarshal(publicBody, &publicVideo))
+			require.NotNil(t, publicVideo.Error)
+			require.Equal(t, tt.code, publicVideo.Error.Code)
+			require.Equal(t, tt.message, publicVideo.Error.Message)
+			require.NotNil(t, publicVideo.Error.Retryable)
+			require.False(t, *publicVideo.Error.Retryable)
+		})
+	}
 }
 
 func TestSeedance25CompletedGETIncludesOnlyReturnedLastFrameURL(t *testing.T) {
@@ -749,7 +767,7 @@ func TestSeedance25TaskTypeConstraintWithoutStatusStillTerminatesSafely(t *testi
 	require.EqualValues(t, model.TaskStatusFailure, result.Status)
 	persisted, err := adaptor.ApplyTaskResultPolicy(seedance25TerminalTask(false), result, []byte(body))
 	require.NoError(t, err)
-	require.Contains(t, string(persisted), `"code":"invalid_request_error"`)
+	require.Contains(t, string(persisted), `"code":"InvalidParameter.TaskTypeConstraint"`)
 	require.NotContains(t, string(persisted), "raw internal diagnostic marker")
 }
 
