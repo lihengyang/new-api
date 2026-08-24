@@ -57,6 +57,28 @@ var seedance25AllowedOmniReferenceTaskTypes = map[string]struct{}{
 	"extend":    {},
 }
 
+const (
+	seedance25RatioProfileGeneral = "text_or_reference"
+	seedance25RatioProfileFrame   = "first_or_first_last_frame"
+	seedance25RatioProfileEdit    = "edit"
+	seedance25RatioProfileExtend  = "extend"
+)
+
+var seedance25RatioMatrix = map[string]map[string]struct{}{
+	seedance25RatioProfileGeneral: {
+		"adaptive": {},
+		"16:9":     {},
+		"4:3":      {},
+		"1:1":      {},
+		"3:4":      {},
+		"9:16":     {},
+		"21:9":     {},
+	},
+	seedance25RatioProfileFrame:  {"adaptive": {}},
+	seedance25RatioProfileEdit:   {"adaptive": {}},
+	seedance25RatioProfileExtend: {"adaptive": {}},
+}
+
 var seedance25ForbiddenFields = map[string]struct{}{
 	"callback":                {},
 	"callback_events":         {},
@@ -290,6 +312,20 @@ func seedance25HasReferenceVideo(raw json.RawMessage) bool {
 	return false
 }
 
+func seedance25RatioAllowed(inputMode, taskType, ratio string) bool {
+	profile := seedance25RatioProfileGeneral
+	switch {
+	case taskType == "edit":
+		profile = seedance25RatioProfileEdit
+	case taskType == "extend":
+		profile = seedance25RatioProfileExtend
+	case inputMode == seedance25InputFirstFrame || inputMode == seedance25InputFirstLastFrame:
+		profile = seedance25RatioProfileFrame
+	}
+	_, ok := seedance25RatioMatrix[profile][ratio]
+	return ok
+}
+
 func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req *relaycommon.TaskSubmitReq) *dto.TaskError {
 	originModelName := info.OriginModelName
 	if originModelName == "" {
@@ -325,8 +361,8 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 	if req.Metadata == nil {
 		req.Metadata = make(map[string]interface{})
 	}
+	taskType := ""
 	if rawTaskType, ok := metadata["omni_reference_task_type"]; ok {
-		var taskType string
 		if rawJSONIsNull(rawTaskType) || common.Unmarshal(rawTaskType, &taskType) != nil {
 			return seedance25InvalidRequest("metadata.omni_reference_task_type must be auto, reference, edit, or extend")
 		}
@@ -336,13 +372,13 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 		req.Metadata["omni_reference_task_type"] = taskType
 	}
 
-	rawDuration, ok := metadata["duration"]
-	if !ok || len(rawDuration) == 0 || rawJSONIsNull(rawDuration) {
-		return seedance25InvalidRequest("metadata.duration is required and must be -1 or an integer from 4 to 30")
-	}
-	var duration int
-	if err := common.Unmarshal(rawDuration, &duration); err != nil || (duration != -1 && (duration < 4 || duration > 30)) {
-		return seedance25InvalidRequest("metadata.duration must be -1 or an integer from 4 to 30")
+	duration := -1
+	rawDuration, durationPresent := metadata["duration"]
+	if durationPresent {
+		if len(rawDuration) == 0 || rawJSONIsNull(rawDuration) || common.Unmarshal(rawDuration, &duration) != nil ||
+			(duration != -1 && (duration < 4 || duration > 30)) {
+			return seedance25InvalidRequest("metadata.duration must be omitted, -1, or an integer from 4 to 30")
+		}
 	}
 
 	resolution := "720p"
@@ -383,39 +419,57 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 	if err != nil {
 		return seedance25InvalidRequest(err.Error())
 	}
+	if inputMode == seedance25InputText && strings.TrimSpace(req.Prompt) == "" {
+		return seedance25InvalidRequest("prompt is required for text-only requests")
+	}
+	if taskType == "reference" && inputMode != seedance25InputReference {
+		return seedance25InvalidRequest("metadata.omni_reference_task_type=reference requires at least one reference_image, reference_video, or reference_audio input")
+	}
 	ratio := ""
-	if rawRatio, ok := metadata["ratio"]; ok {
+	rawRatio, ratioPresent := metadata["ratio"]
+	if ratioPresent {
 		if rawJSONIsNull(rawRatio) || common.Unmarshal(rawRatio, &ratio) != nil {
 			return seedance25InvalidRequest("metadata.ratio must be a supported string")
 		}
 	}
-	if inputMode == seedance25InputFirstFrame || inputMode == seedance25InputFirstLastFrame {
-		if ratio == "" {
-			ratio = "adaptive"
-		} else if ratio != "adaptive" {
-			return seedance25InvalidRequest("first-frame modes require metadata.ratio=adaptive")
+	effectiveRatio := ratio
+	if !ratioPresent {
+		effectiveRatio = "adaptive"
+	}
+	if !seedance25RatioAllowed(inputMode, taskType, effectiveRatio) {
+		if taskType == "edit" || taskType == "extend" {
+			return seedance25InvalidRequest(fmt.Sprintf("metadata.omni_reference_task_type=%s only supports metadata.ratio=adaptive", taskType))
 		}
-	} else if ratio != "" && ratio != "adaptive" && ratio != "16:9" {
-		return seedance25InvalidRequest("metadata.ratio is not supported by the current customer contract")
+		if inputMode == seedance25InputFirstFrame || inputMode == seedance25InputFirstLastFrame {
+			return seedance25InvalidRequest("first-frame modes only support metadata.ratio=adaptive")
+		}
+		return seedance25InvalidRequest("metadata.ratio must be adaptive, 16:9, 4:3, 1:1, 3:4, 9:16, or 21:9")
+	}
+	if inputMode == seedance25InputFirstFrame || inputMode == seedance25InputFirstLastFrame {
+		if !ratioPresent {
+			ratio = "adaptive"
+		}
 	}
 
-	taskType, _ := req.Metadata["omni_reference_task_type"].(string)
 	if taskType == "edit" || taskType == "extend" {
 		if !seedance25HasReferenceVideo(metadata["content"]) {
 			return seedance25InvalidRequest(fmt.Sprintf("metadata.omni_reference_task_type=%s requires at least one reference_video input", taskType))
 		}
-		if ratio != "adaptive" {
-			return seedance25InvalidRequest(fmt.Sprintf("metadata.omni_reference_task_type=%s requires metadata.ratio=adaptive", taskType))
-		}
 		if taskType == "edit" && duration != -1 {
-			return seedance25InvalidRequest("metadata.omni_reference_task_type=edit requires metadata.duration=-1")
+			return seedance25InvalidRequest("metadata.omni_reference_task_type=edit requires metadata.duration to be omitted or -1")
 		}
 	}
 
-	req.Metadata["duration"] = duration
+	if durationPresent {
+		req.Metadata["duration"] = duration
+	} else {
+		delete(req.Metadata, "duration")
+	}
 	req.Metadata["resolution"] = resolution
-	if ratio != "" {
+	if ratioPresent || inputMode == seedance25InputFirstFrame || inputMode == seedance25InputFirstLastFrame {
 		req.Metadata["ratio"] = ratio
+	} else {
+		delete(req.Metadata, "ratio")
 	}
 	c.Set("task_request", *req)
 	return nil

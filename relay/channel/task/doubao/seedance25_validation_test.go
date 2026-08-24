@@ -25,14 +25,34 @@ func seedance25RequestBody(t *testing.T, metadata map[string]any) []byte {
 }
 
 func seedance25RequestBodyForModel(t *testing.T, model string, metadata map[string]any) []byte {
+	return seedance25RequestBodyWithPromptForModel(t, model, "make a short landscape video", metadata)
+}
+
+func seedance25RequestBodyWithPrompt(t *testing.T, prompt string, metadata map[string]any) []byte {
+	return seedance25RequestBodyWithPromptForModel(t, seedance25TenantAliasForDoubaoTest, prompt, metadata)
+}
+
+func seedance25RequestBodyWithPromptForModel(t *testing.T, model, prompt string, metadata map[string]any) []byte {
 	t.Helper()
 	body, err := common.Marshal(map[string]any{
 		"model":    model,
-		"prompt":   "make a short landscape video",
+		"prompt":   prompt,
 		"metadata": metadata,
 	})
 	require.NoError(t, err)
 	return body
+}
+
+func seedance25UpstreamPayload(t *testing.T, c *gin.Context, info *relaycommon.RelayInfo) map[string]any {
+	t.Helper()
+	info.ChannelMeta = &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "mapped-provider-model"}
+	reader, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	body, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	return payload
 }
 
 func validateSeedance25Body(t *testing.T, body []byte, originModel string) (*gin.Context, *relaycommon.RelayInfo, error) {
@@ -162,11 +182,22 @@ func TestValidateSeedance25DurationStrictJSONInteger(t *testing.T) {
 		})
 	}
 
+	t.Run("omitted_uses_local_default_without_serializing", func(t *testing.T) {
+		metadata := map[string]any{"resolution": "720p"}
+		c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.NoError(t, err)
+		req, err := relaycommon.GetTaskRequest(c)
+		require.NoError(t, err)
+		require.NotContains(t, req.Metadata, "duration")
+		payload := seedance25UpstreamPayload(t, c, info)
+		require.NotContains(t, payload, "duration")
+	})
+
 	invalidBodies := map[string]string{
-		"missing": `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"resolution":"720p"} }`,
 		"null":    `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":null,"resolution":"720p"} }`,
 		"string":  `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":"4","resolution":"720p"} }`,
 		"float":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":4.0,"resolution":"720p"} }`,
+		"zero":    `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":0,"resolution":"720p"} }`,
 		"three":   `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":3,"resolution":"720p"} }`,
 		"thirty1": `{ "model":"lsf-seedance-2.5-henrytest", "prompt":"p", "metadata":{"duration":31,"resolution":"720p"} }`,
 	}
@@ -175,6 +206,64 @@ func TestValidateSeedance25DurationStrictJSONInteger(t *testing.T) {
 			_, _, err := validateSeedance25Body(t, []byte(body), seedance25TenantAliasForDoubaoTest)
 			require.Error(t, err)
 		})
+	}
+}
+
+func TestValidateSeedance25OfficialRatioMatrixAndForwarding(t *testing.T) {
+	officialRatios := []string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"}
+	for _, resolution := range []string{"480p", "720p", "1080p"} {
+		for _, ratio := range officialRatios {
+			t.Run("text_"+resolution+"_"+ratio, func(t *testing.T) {
+				metadata := map[string]any{"duration": 4, "resolution": resolution, "ratio": ratio}
+				c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+				require.NoError(t, err)
+				require.Equal(t, ratio, seedance25UpstreamPayload(t, c, info)["ratio"])
+			})
+		}
+	}
+
+	references := []struct {
+		name    string
+		content []any
+	}{
+		{name: "image", content: []any{seedance25Image("reference_image")}},
+		{name: "video", content: []any{seedance25Video("reference_video")}},
+		{name: "audio", content: []any{seedance25AudioURL("asset://audio/reference-one")}},
+	}
+	for _, reference := range references {
+		for _, ratio := range officialRatios {
+			t.Run("reference_"+reference.name+"_"+ratio, func(t *testing.T) {
+				metadata := map[string]any{"duration": 4, "resolution": "720p", "ratio": ratio, "content": reference.content}
+				c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+				require.NoError(t, err)
+				require.Equal(t, ratio, seedance25UpstreamPayload(t, c, info)["ratio"])
+			})
+		}
+	}
+
+	frameModes := []struct {
+		name    string
+		content []any
+	}{
+		{name: "first", content: []any{seedance25Image("first_frame")}},
+		{name: "first_last", content: []any{seedance25Image("first_frame"), seedance25Image("last_frame")}},
+	}
+	for _, mode := range frameModes {
+		for _, ratio := range append([]string{""}, officialRatios...) {
+			t.Run(mode.name+"_"+ratio, func(t *testing.T) {
+				metadata := map[string]any{"duration": 4, "resolution": "720p", "content": mode.content}
+				if ratio != "" {
+					metadata["ratio"] = ratio
+				}
+				c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+				if ratio != "" && ratio != "adaptive" {
+					require.Error(t, err)
+					return
+				}
+				require.NoError(t, err)
+				require.Equal(t, "adaptive", seedance25UpstreamPayload(t, c, info)["ratio"])
+			})
+		}
 	}
 }
 
@@ -214,6 +303,59 @@ func TestValidateSeedance25SupportedInputModes(t *testing.T) {
 	}
 }
 
+func TestValidateSeedance25PromptAndExplicitReferenceRequirements(t *testing.T) {
+	for _, prompt := range []string{"", " \t\n"} {
+		t.Run("text_only_requires_prompt", func(t *testing.T) {
+			_, _, err := validateSeedance25Body(t, seedance25RequestBodyWithPrompt(t, prompt, validSeedance25Metadata()), seedance25TenantAliasForDoubaoTest)
+			require.Error(t, err)
+		})
+	}
+
+	t.Run("explicit_reference_requires_assets", func(t *testing.T) {
+		metadata := validSeedance25Metadata()
+		metadata["omni_reference_task_type"] = "reference"
+		_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+		require.Error(t, err)
+	})
+
+	validPromptlessMedia := []struct {
+		name     string
+		metadata map[string]any
+	}{
+		{
+			name: "pure audio",
+			metadata: map[string]any{
+				"duration": 4, "resolution": "720p",
+				"content": []any{seedance25AudioURL("asset://audio/reference-one")},
+			},
+		},
+		{
+			name: "mixed references",
+			metadata: map[string]any{
+				"duration": 4, "resolution": "720p",
+				"content": []any{seedance25Image("reference_image"), seedance25Video("reference_video"), seedance25AudioURL("asset://audio/reference-one")},
+			},
+		},
+		{
+			name: "explicit reference",
+			metadata: map[string]any{
+				"duration": 4, "resolution": "720p", "omni_reference_task_type": "reference",
+				"content": []any{seedance25Image("reference_image")},
+			},
+		},
+	}
+	for _, tt := range validPromptlessMedia {
+		t.Run(tt.name, func(t *testing.T) {
+			c, info, err := validateSeedance25Body(t, seedance25RequestBodyWithPrompt(t, "", tt.metadata), seedance25TenantAliasForDoubaoTest)
+			require.NoError(t, err)
+			payload := seedance25UpstreamPayload(t, c, info)
+			for _, item := range payload["content"].([]any) {
+				require.NotEqual(t, "text", item.(map[string]any)["type"])
+			}
+		})
+	}
+}
+
 func TestValidateSeedance25RejectsInvalidInputCombinations(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -229,7 +371,7 @@ func TestValidateSeedance25RejectsInvalidInputCombinations(t *testing.T) {
 		{name: "missing role", content: []any{map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.invalid/a.png"}}}},
 		{name: "wrong audio role", content: []any{map[string]any{"type": "audio_url", "role": "reference_video", "audio_url": map[string]any{"url": "https://example.invalid/a.wav"}}}},
 		{name: "first fixed ratio", content: []any{seedance25Image("first_frame")}, ratio: "16:9"},
-		{name: "unsupported reference ratio", content: []any{seedance25Image("reference_image")}, ratio: "9:16"},
+		{name: "unsupported reference ratio", content: []any{seedance25Image("reference_image")}, ratio: "2:1"},
 	}
 
 	for _, tt := range tests {
@@ -449,30 +591,36 @@ func TestValidateSeedance25OmniReferenceTaskTypeReachesUpstreamUnchanged(t *test
 
 func TestValidateSeedance25ExplicitEditAndExtendConstraints(t *testing.T) {
 	tests := []struct {
-		name     string
-		taskType string
-		duration int
-		ratio    string
-		content  []any
-		valid    bool
+		name            string
+		taskType        string
+		duration        int
+		includeDuration bool
+		ratio           string
+		includeRatio    bool
+		content         []any
+		valid           bool
 	}{
-		{name: "valid edit", taskType: "edit", duration: -1, ratio: "adaptive", content: []any{seedance25Video("reference_video")}, valid: true},
-		{name: "edit duration", taskType: "edit", duration: 4, ratio: "adaptive", content: []any{seedance25Video("reference_video")}},
-		{name: "edit ratio omitted", taskType: "edit", duration: -1, content: []any{seedance25Video("reference_video")}},
-		{name: "edit missing video", taskType: "edit", duration: -1, ratio: "adaptive", content: []any{seedance25Image("reference_image")}},
-		{name: "valid extend inferred duration", taskType: "extend", duration: -1, ratio: "adaptive", content: []any{seedance25Video("reference_video")}, valid: true},
-		{name: "valid extend fixed duration", taskType: "extend", duration: 5, ratio: "adaptive", content: []any{seedance25Video("reference_video")}, valid: true},
-		{name: "extend fixed ratio", taskType: "extend", duration: 5, ratio: "16:9", content: []any{seedance25Video("reference_video")}},
-		{name: "extend missing video", taskType: "extend", duration: 5, ratio: "adaptive", content: []any{seedance25Image("reference_image")}},
+		{name: "valid edit explicit defaults", taskType: "edit", duration: -1, includeDuration: true, ratio: "adaptive", includeRatio: true, content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "valid edit omitted defaults", taskType: "edit", content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "edit duration", taskType: "edit", duration: 4, includeDuration: true, ratio: "adaptive", includeRatio: true, content: []any{seedance25Video("reference_video")}},
+		{name: "edit missing video", taskType: "edit", duration: -1, includeDuration: true, ratio: "adaptive", includeRatio: true, content: []any{seedance25Image("reference_image")}},
+		{name: "valid extend inferred duration", taskType: "extend", duration: -1, includeDuration: true, ratio: "adaptive", includeRatio: true, content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "valid extend omitted ratio", taskType: "extend", duration: 5, includeDuration: true, content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "valid extend omitted defaults", taskType: "extend", content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "extend fixed ratio", taskType: "extend", duration: 5, includeDuration: true, ratio: "16:9", includeRatio: true, content: []any{seedance25Video("reference_video")}},
+		{name: "extend missing video", taskType: "extend", duration: 5, includeDuration: true, ratio: "adaptive", includeRatio: true, content: []any{seedance25Image("reference_image")}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["omni_reference_task_type"] = tt.taskType
-			metadata["duration"] = tt.duration
 			metadata["content"] = tt.content
-			if tt.ratio != "" {
+			delete(metadata, "duration")
+			if tt.includeDuration {
+				metadata["duration"] = tt.duration
+			}
+			if tt.includeRatio {
 				metadata["ratio"] = tt.ratio
 			}
 			if tt.valid {
@@ -484,21 +632,40 @@ func TestValidateSeedance25ExplicitEditAndExtendConstraints(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			info.ChannelMeta = &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "mapped-provider-model"}
-			reader, buildErr := (&TaskAdaptor{}).BuildRequestBody(c, info)
-			require.NoError(t, buildErr)
-			body, readErr := io.ReadAll(reader)
-			require.NoError(t, readErr)
-			var payload map[string]any
-			require.NoError(t, common.Unmarshal(body, &payload))
+			payload := seedance25UpstreamPayload(t, c, info)
 			require.Equal(t, tt.taskType, payload["omni_reference_task_type"])
-			require.Equal(t, float64(tt.duration), payload["duration"])
-			require.Equal(t, "adaptive", payload["ratio"])
+			if tt.includeDuration {
+				require.Equal(t, float64(tt.duration), payload["duration"])
+			} else {
+				require.NotContains(t, payload, "duration")
+			}
+			if tt.includeRatio {
+				require.Equal(t, "adaptive", payload["ratio"])
+			} else {
+				require.NotContains(t, payload, "ratio")
+			}
 			require.Equal(t, false, payload["generate_audio"])
 			upstreamContent := payload["content"].([]any)
 			require.Equal(t, "video_url", upstreamContent[0].(map[string]any)["type"])
 			require.Equal(t, "reference_video", upstreamContent[0].(map[string]any)["role"])
 		})
+	}
+
+	for _, taskType := range []string{"edit", "extend"} {
+		for _, ratio := range []string{"16:9", "4:3", "1:1", "3:4", "9:16", "21:9"} {
+			t.Run(taskType+"_rejects_"+ratio, func(t *testing.T) {
+				metadata := map[string]any{
+					"duration": 5, "resolution": "720p", "ratio": ratio,
+					"omni_reference_task_type": taskType,
+					"content":                  []any{seedance25Video("reference_video")},
+				}
+				if taskType == "edit" {
+					metadata["duration"] = -1
+				}
+				_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+				require.Error(t, err)
+			})
+		}
 	}
 }
 

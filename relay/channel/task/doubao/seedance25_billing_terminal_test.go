@@ -277,6 +277,7 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 		name           string
 		resolution     string
 		duration       int
+		omitDuration   bool
 		video          bool
 		expectedTokens int
 		expectedQuota  int
@@ -285,6 +286,7 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 		{name: "720p four seconds", resolution: "720p", duration: 4, expectedTokens: 86945, expectedQuota: 465156},
 		{name: "720p thirty seconds", resolution: "720p", duration: 30, expectedTokens: 652084, expectedQuota: 3488650},
 		{name: "720p automatic duration reserves thirty seconds", resolution: "720p", duration: -1, expectedTokens: 652084, expectedQuota: 3488650},
+		{name: "720p omitted duration reserves thirty seconds", resolution: "720p", omitDuration: true, expectedTokens: 652084, expectedQuota: 3488650},
 		{name: "720p video reserves thirty second input", resolution: "720p", duration: 4, video: true, expectedTokens: 739029, expectedQuota: 2364893},
 		{name: "720p video plus thirty second output", resolution: "720p", duration: 30, video: true, expectedTokens: 1304168, expectedQuota: 4173338},
 		{name: "720p video automatic duration uses both maximums", resolution: "720p", duration: -1, video: true, expectedTokens: 1304168, expectedQuota: 4173338},
@@ -296,7 +298,10 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			metadata := map[string]any{"resolution": tt.resolution, "duration": tt.duration}
+			metadata := map[string]any{"resolution": tt.resolution}
+			if !tt.omitDuration {
+				metadata["duration"] = tt.duration
+			}
 			if tt.video {
 				metadata["content"] = []any{seedance25Video("reference_video")}
 			}
@@ -324,7 +329,10 @@ func TestSeedance25ReservationUsesConservativeThirtySecondVideoCeilingAndCeil(t 
 			if tt.video {
 				inputDuration = seedance25MaxDurationSeconds
 			}
-			outputDuration := normalizeSeedanceDuration(tt.duration, seedance25MaxDurationSeconds)
+			outputDuration := seedance25MaxDurationSeconds
+			if !tt.omitDuration {
+				outputDuration = normalizeSeedanceDuration(tt.duration, seedance25MaxDurationSeconds)
+			}
 			estimatedTokens := int(math.Ceil(float64(inputDuration+outputDuration) * float64(maxPixels) * seedance25ReservationFPS / 1024))
 			require.Equal(t, tt.expectedTokens, estimatedTokens)
 			quota, ok := adaptor.EstimatePrechargeQuota(c, info)

@@ -147,14 +147,91 @@ func setupSeedance25SubmitFixture(t *testing.T, requestBody []byte, upstreamURL,
 }
 
 func seedance25SubmitRequestBody(t *testing.T, metadata map[string]any) []byte {
+	return seedance25SubmitRequestBodyWithPrompt(t, "safe integration prompt", metadata)
+}
+
+func seedance25SubmitRequestBodyWithPrompt(t *testing.T, prompt string, metadata map[string]any) []byte {
 	t.Helper()
 	body, err := common.Marshal(map[string]any{
 		"model":    seedance25TenantAliasForTest,
-		"prompt":   "safe integration prompt",
+		"prompt":   prompt,
 		"metadata": metadata,
 	})
 	require.NoError(t, err)
 	return body
+}
+
+func TestSeedance25RealDoubaoSubmitPreservesPromptlessMediaAndOmittedDefaults(t *testing.T) {
+	tests := []struct {
+		name              string
+		prompt            string
+		metadata          map[string]any
+		expectDuration    bool
+		expectRatio       bool
+		expectedMediaType string
+	}{
+		{
+			name:   "promptless explicit audio reference",
+			prompt: "",
+			metadata: map[string]any{
+				"duration": 4, "resolution": "720p", "ratio": "21:9",
+				"omni_reference_task_type": "reference",
+				"content":                  []any{seedance25SubmitAudio("reference_audio")},
+			},
+			expectDuration: true, expectRatio: true, expectedMediaType: "audio_url",
+		},
+		{
+			name: "edit omitted duration and ratio",
+			metadata: map[string]any{
+				"resolution": "720p", "omni_reference_task_type": "edit",
+				"content": []any{seedance25SubmitVideo("reference_video")},
+			},
+			expectedMediaType: "video_url",
+		},
+		{
+			name: "extend omitted ratio",
+			metadata: map[string]any{
+				"duration": 5, "resolution": "720p", "omni_reference_task_type": "extend",
+				"content": []any{seedance25SubmitVideo("reference_video")},
+			},
+			expectDuration: true, expectedMediaType: "video_url",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var upstreamBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodPost, r.Method)
+				var err error
+				upstreamBody, err = io.ReadAll(r.Body)
+				require.NoError(t, err)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"id":"placeholder-upstream-task"}`)
+			}))
+			defer server.Close()
+
+			requestBody := seedance25SubmitRequestBodyWithPrompt(t, tt.prompt, tt.metadata)
+			mapping := `{"` + seedance25TenantAliasForTest + `":"` + seedance25MappedModelPlaceholder + `"}`
+			fixture := setupSeedance25SubmitFixture(t, requestBody, server.URL, mapping)
+			result, taskErr := relay.RelayTaskSubmit(fixture.context, fixture.info)
+			require.Nil(t, taskErr)
+			require.NotNil(t, result)
+
+			payload := decodeSeedance25SubmitPayload(t, upstreamBody)
+			_, durationPresent := payload["duration"]
+			_, ratioPresent := payload["ratio"]
+			require.Equal(t, tt.expectDuration, durationPresent)
+			require.Equal(t, tt.expectRatio, ratioPresent)
+			content := payload["content"].([]any)
+			require.Equal(t, tt.expectedMediaType, content[0].(map[string]any)["type"])
+			if tt.prompt == "" {
+				require.Len(t, content, 1)
+			} else {
+				require.Equal(t, "text", content[len(content)-1].(map[string]any)["type"])
+			}
+		})
+	}
 }
 
 func seedance25SubmitImage(role string) map[string]any {

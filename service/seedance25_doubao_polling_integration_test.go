@@ -304,6 +304,7 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 		{name: "task type mismatch", responseBody: `{"status":"failed","error":{"code":"InvalidParameter.TaskTypeMismatch","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "InvalidParameter.TaskTypeMismatch", expectedMessage: "The task type identified by the model does not match the specified value. Revise the prompt and input assets, then try again."},
 		{name: "audio policy violation", responseBody: `{"status":"failed","error":{"code":"OutputAudioSensitiveContentDetected.PolicyViolation","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "OutputAudioSensitiveContentDetected.PolicyViolation", expectedMessage: "The generated audio may be related to copyright restrictions. Please replace the input content and try again."},
 		{name: "ordinary upstream failure", responseBody: `{"status":"failed","error":{"code":"ProviderFailurePlaceholder","message":"raw-upstream-diagnostic-placeholder"}}`, expectedCode: "video_generation_failed"},
+		{name: "expired terminal failure", responseBody: `{"status":"expired","error":{"code":"ProviderExpiredPlaceholder","message":"raw-upstream-diagnostic-placeholder Request ID: private-marker"},"execution_expires_after":3600}`, expectedCode: "video_generation_failed"},
 		{name: "missing billing snapshot", responseBody: `{"status":"succeeded","content":{"video_url":"https://example.invalid/should-not-publish.mp4"},"usage":{"completion_tokens":100}}`, mutate: func(task *model.Task) { task.PrivateData.BillingContext = nil }, expectedCode: "invalid_billing_context"},
 		{name: "damaged billing snapshot", responseBody: `{"status":"succeeded","content":{"video_url":"https://example.invalid/should-not-publish.mp4"},"usage":{"completion_tokens":100}}`, mutate: func(task *model.Task) { task.PrivateData.BillingContext.ModelRatio = 5.34 }, expectedCode: "invalid_billing_context"},
 		{name: "non finite model ratio", responseBody: `{"status":"succeeded","content":{"video_url":"https://example.invalid/should-not-publish.mp4"},"usage":{"completion_tokens":100}}`, mutate: func(task *model.Task) { task.PrivateData.BillingContext.ModelRatio = math.NaN() }, expectedCode: "invalid_billing_context"},
@@ -377,6 +378,10 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 			require.NotContains(t, logs[0].Other+logs[0].Content, "raw-upstream-diagnostic-placeholder")
 
 			publicBody := seedance25PublicPollingBody(t, &reloaded)
+			replayedPublicBody := seedance25PublicPollingBody(t, &reloaded)
+			require.JSONEq(t, string(publicBody), string(replayedPublicBody))
+			require.EqualValues(t, 1, calls.Load())
+			require.Len(t, seedance25IntegrationLogs(t, fixture.userID), 1)
 			var video dto.OpenAIVideo
 			require.NoError(t, common.Unmarshal(publicBody, &video))
 			require.Equal(t, dto.VideoStatusFailed, video.Status)
@@ -387,6 +392,8 @@ func TestSeedance25RealDoubaoPollingFailuresRefundOnceAndStaySanitized(t *testin
 			}
 			require.NotContains(t, string(publicBody), "placeholder-upstream")
 			require.NotContains(t, string(publicBody), "raw-upstream-diagnostic-placeholder")
+			require.NotContains(t, string(publicBody), "private-marker")
+			require.NotContains(t, string(publicBody), "execution_expires_after")
 			require.NotContains(t, string(publicBody), "should-not-publish")
 			require.NotNil(t, video.Error)
 			require.Equal(t, tt.expectedCode, video.Error.Code)
@@ -442,9 +449,9 @@ func TestSeedance25AsyncMediaFailuresReleaseReservationAndStaySanitized(t *testi
 	}
 }
 
-func TestSeedance25RealDoubaoPollingCASLoserDoesNotRepeatFinancialAction(t *testing.T) {
+func TestSeedance25ExpiredPollingCASLoserDoesNotRepeatFinancialAction(t *testing.T) {
 	var calls atomic.Int32
-	server := newSeedance25PollingServer(t, `{"status":"failed","error":{"code":"InvalidParameter.TaskTypeMismatch","message":"raw-upstream-diagnostic-placeholder"}}`, &calls)
+	server := newSeedance25PollingServer(t, `{"status":"expired","error":{"code":"ProviderExpiredPlaceholder","message":"raw-upstream-diagnostic-placeholder Request ID: private-marker"},"execution_expires_after":3600}`, &calls)
 	defer server.Close()
 	const reservation = 600
 	fixture := seedSeedance25PollingIntegrationFixture(t, server.URL, reservation)

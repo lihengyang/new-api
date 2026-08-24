@@ -24,9 +24,12 @@ func TestRelayTaskSubmitRejectsSeedance25InvalidRequestsBeforeBilling(t *testing
 		name string
 		body string
 	}{
-		{name: "missing duration", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"resolution":"720p"}}`},
+		{name: "missing prompt for text only", body: `{"model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p"}}`},
+		{name: "blank prompt for text only", body: `{"prompt":"  ","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p"}}`},
+		{name: "explicit reference without assets", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p","omni_reference_task_type":"reference"}}`},
 		{name: "unsupported resolution", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"4k"}}`},
 		{name: "disabled false field", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p","camera_fixed":false}}`},
+		{name: "first frame fixed ratio", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"duration":4,"resolution":"720p","ratio":"21:9","content":[{"type":"image_url","role":"first_frame","image_url":{"url":"https://example.invalid/reference.png"}}]}}`},
 		{name: "edit duration", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"client_request_id":"req-edit-duration","duration":4,"resolution":"480p","ratio":"adaptive","omni_reference_task_type":"edit","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://example.invalid/reference.mp4"}}]}}`},
 		{name: "extend ratio", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"client_request_id":"req-extend-ratio","duration":5,"resolution":"480p","ratio":"16:9","omni_reference_task_type":"extend","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://example.invalid/reference.mp4"}}]}}`},
 		{name: "edit missing reference video", body: `{"prompt":"p","model":"` + seedance25TenantAliasForRelayTest + `","metadata":{"client_request_id":"req-edit-no-video","duration":-1,"resolution":"480p","ratio":"adaptive","omni_reference_task_type":"edit","content":[{"type":"image_url","role":"reference_image","image_url":{"url":"https://example.invalid/reference.png"}}]}}`},

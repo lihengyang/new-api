@@ -136,7 +136,11 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
-	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+	validateBasicRequest := relaycommon.ValidateBasicTaskRequest
+	if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+		validateBasicRequest = relaycommon.ValidateBasicTaskRequestAllowEmptyPrompt
+	}
+	if taskErr := validateBasicRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
 		return taskErr
 	}
 
@@ -560,10 +564,12 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	}
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
-	r.Content = append(r.Content, ContentItem{
-		Type: "text",
-		Text: req.Prompt,
-	})
+	if !relaycommon.IsSeedance25OriginAlias(req.Model) || strings.TrimSpace(req.Prompt) != "" {
+		r.Content = append(r.Content, ContentItem{
+			Type: "text",
+			Text: req.Prompt,
+		})
+	}
 
 	return &r, nil
 }
@@ -607,7 +613,7 @@ func newDoubaoTaskInfo(status, videoURL, lastFrameURL, errorCode, errorMessage s
 		taskResult.Status = model.TaskStatusSuccess
 		taskResult.Progress = "100%"
 		taskResult.Url = videoURL
-	case "failed":
+	case "failed", "expired":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
 		taskResult.Reason = errorMessage
