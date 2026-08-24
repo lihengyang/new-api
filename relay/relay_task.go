@@ -275,12 +275,26 @@ func relayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, noWriteRespons
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
-			return nil, service.TaskErrorWrapper(errors.New("upstream task submission failed"), "do_request_failed", http.StatusInternalServerError)
+			if classifier, ok := adaptor.(channel.TaskSubmitErrorClassifier); ok {
+				return nil, classifier.ClassifyTaskSubmitTransportError(err)
+			}
 		}
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
+	if resp == nil && relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+		if classifier, ok := adaptor.(channel.TaskSubmitErrorClassifier); ok {
+			return nil, classifier.ClassifyTaskSubmitTransportError(errors.New("upstream response is missing"))
+		}
+	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
-		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) || isMediaKit {
+		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+			if classifier, ok := adaptor.(channel.TaskSubmitErrorClassifier); ok {
+				responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+				_ = resp.Body.Close()
+				return nil, classifier.ClassifyTaskSubmitHTTPError(resp.StatusCode, responseBody)
+			}
+		}
+		if isMediaKit {
 			return nil, service.TaskErrorWrapper(errors.New("upstream task submission failed"), "fail_to_fetch_task", resp.StatusCode)
 		}
 		responseBody, _ := io.ReadAll(resp.Body)

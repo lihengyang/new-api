@@ -427,7 +427,9 @@ func TestSeedance25AsyncMediaFailuresReleaseReservationAndStaySanitized(t *testi
 			var reloaded model.Task
 			require.NoError(t, model.DB.First(&reloaded, fixture.task.ID).Error)
 			require.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
-			require.Contains(t, string(reloaded.Data), `"code":"video_generation_failed"`)
+			require.Contains(t, string(reloaded.Data), `"code":"InvalidParameter"`)
+			require.Contains(t, string(reloaded.Data), `"message":"A request parameter is invalid. Check the request parameters and try again."`)
+			require.Contains(t, string(reloaded.Data), `"retryable":false`)
 			require.NotContains(t, string(reloaded.Data), upstreamCode)
 			require.NotContains(t, string(reloaded.Data), "signature=secret")
 			require.NotContains(t, reloaded.FailReason, "signature=secret")

@@ -364,3 +364,23 @@ func TestRelayTaskSubmitNoWriteInternalRetryReusesReservation(t *testing.T) {
 	require.NoError(t, model.DB.Model(&model.Task{}).Where("token_id = ? AND client_request_id = ?", 501, "req_retry").Count(&count).Error)
 	require.EqualValues(t, 1, count)
 }
+
+func TestLegacyTaskAdaptorSubmitWrapperRemainsUnchanged(t *testing.T) {
+	setupRelayTaskTestDB(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"legacy":"raw legacy body"}`))
+	}))
+	defer upstream.Close()
+
+	c, info := newTaskClientRequestIDContext(t, `{"prompt":"hello","model":"seedance"}`)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+	result, taskErr := RelayTaskSubmit(c, info)
+
+	require.Nil(t, result)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "fail_to_fetch_task", taskErr.Code)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.Nil(t, taskErr.Retryable)
+	require.Contains(t, taskErr.Message, "raw legacy body")
+}

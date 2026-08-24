@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"sync"
@@ -315,6 +316,7 @@ func TestFailTaskReservationUpdatesReservedToFailure(t *testing.T) {
 	err = FailTaskReservation(FailTaskReservationParams{
 		ID:         task.ID,
 		FailReason: "upstream failed",
+		Data:       json.RawMessage(`{"error":{"code":"safe_error","message":"safe message","retryable":false}}`),
 		UpdatedAt:  333,
 	})
 	require.NoError(t, err)
@@ -325,6 +327,7 @@ func TestFailTaskReservationUpdatesReservedToFailure(t *testing.T) {
 	require.Equal(t, "100%", reloaded.Progress)
 	require.Zero(t, reloaded.Quota)
 	require.Equal(t, "upstream failed", reloaded.FailReason)
+	require.JSONEq(t, `{"error":{"code":"safe_error","message":"safe message","retryable":false}}`, string(reloaded.Data))
 	require.EqualValues(t, 333, reloaded.UpdatedAt)
 }
 

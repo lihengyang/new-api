@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -213,4 +214,67 @@ func TestFailTaskReservationIfNeededMarksReservationFailure(t *testing.T) {
 	require.Equal(t, "upstream failed", reloaded.FailReason)
 	require.Zero(t, reloaded.Quota)
 	require.False(t, reloaded.Status.IsUpstreamPollable())
+}
+
+func TestFailTaskReservationPersistsOnlySafeStructuredErrorAndCASLoserCannotReplaceIt(t *testing.T) {
+	setupControllerTaskReservationTestDB(t)
+	reservation := createControllerReservation(t)
+	relayInfo := controllerTaskRelayInfo()
+	relayInfo.ReservationTaskID = reservation.ID
+	retryable := false
+
+	failTaskReservationIfNeeded(&dto.TaskError{
+		Code:       "upstream_request_rejected",
+		Message:    "The request was rejected. Check the request parameters and try again.",
+		Retryable:  &retryable,
+		StatusCode: http.StatusBadRequest,
+		Error:      errors.New("raw-message Request ID: request-marker endpoint-marker model-marker account-marker channel-marker routing-marker"),
+	}, relayInfo)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, reservation.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Equal(t, "The request was rejected. Check the request parameters and try again.", reloaded.FailReason)
+	public := relay.BuildOpenAIVideoFromTask(&reloaded)
+	require.NotNil(t, public.Error)
+	require.Equal(t, "upstream_request_rejected", public.Error.Code)
+	require.Equal(t, "The request was rejected. Check the request parameters and try again.", public.Error.Message)
+	require.NotNil(t, public.Error.Retryable)
+	require.False(t, *public.Error.Retryable)
+	for _, forbidden := range []string{"raw-message", "Request ID", "request-marker", "endpoint-marker", "model-marker", "account-marker", "channel-marker", "routing-marker"} {
+		require.NotContains(t, string(reloaded.Data), forbidden)
+	}
+
+	retryable = true
+	failTaskReservationIfNeeded(&dto.TaskError{
+		Code:      "replacement-error",
+		Message:   "replacement-message",
+		Retryable: &retryable,
+	}, relayInfo)
+	var afterCASLoser model.Task
+	require.NoError(t, model.DB.First(&afterCASLoser, reservation.ID).Error)
+	require.JSONEq(t, string(reloaded.Data), string(afterCASLoser.Data))
+	require.Equal(t, reloaded.FailReason, afterCASLoser.FailReason)
+}
+
+func TestExplicitRetryabilityDisablesGatewayRetryAndPreserves429Message(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	retryable := true
+	taskErr := &dto.TaskError{
+		Code:       "rate_limit_exceeded",
+		Message:    "The video service rate limit was exceeded. Try again later.",
+		Retryable:  &retryable,
+		StatusCode: http.StatusTooManyRequests,
+	}
+
+	require.False(t, shouldRetryTaskRelay(c, 77, taskErr, 3))
+	respondTaskError(c, taskErr)
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	var body dto.TaskError
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "The video service rate limit was exceeded. Try again later.", body.Message)
+	require.NotNil(t, body.Retryable)
+	require.True(t, *body.Retryable)
 }

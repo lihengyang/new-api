@@ -113,6 +113,14 @@ type TaskNoWriteResponseBuilder interface {
 	DoResponseNoWrite(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, response *TaskSubmitResponse, err *dto.TaskError)
 }
 
+// TaskSubmitErrorClassifier provides adaptor-scoped submit error semantics.
+// The relay invokes it only for the model family that opts into the policy, so
+// legacy task adaptors keep their existing wrappers and retry behavior.
+type TaskSubmitErrorClassifier interface {
+	ClassifyTaskSubmitTransportError(err error) *dto.TaskError
+	ClassifyTaskSubmitHTTPError(statusCode int, responseBody []byte) *dto.TaskError
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }

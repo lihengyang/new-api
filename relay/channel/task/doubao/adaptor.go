@@ -457,7 +457,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 func (a *TaskAdaptor) DoResponseNoWrite(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, response *channel.TaskSubmitResponse, taskErr *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+			taskErr = a.ClassifyTaskSubmitTransportError(err)
+		} else {
+			taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		}
 		return
 	}
 	_ = resp.Body.Close()
@@ -466,7 +470,7 @@ func (a *TaskAdaptor) DoResponseNoWrite(c *gin.Context, resp *http.Response, inf
 	var dResp responsePayload
 	if err := common.Unmarshal(responseBody, &dResp); err != nil {
 		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
-			taskErr = service.TaskErrorWrapper(errors.Wrap(err, "invalid upstream submit response"), "unmarshal_response_body_failed", http.StatusInternalServerError)
+			taskErr = seedance25SubmitProtocolError()
 		} else {
 			taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 		}
@@ -474,7 +478,11 @@ func (a *TaskAdaptor) DoResponseNoWrite(c *gin.Context, resp *http.Response, inf
 	}
 
 	if dResp.ID == "" {
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+		if relaycommon.IsSeedance25OriginAlias(info.OriginModelName) {
+			taskErr = seedance25SubmitProtocolError()
+		} else {
+			taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+		}
 		return
 	}
 

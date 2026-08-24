@@ -401,6 +401,13 @@ func TestValidateSeedance25OmniReferenceTaskTypeReachesUpstreamUnchanged(t *test
 		t.Run(taskType, func(t *testing.T) {
 			metadata := validSeedance25Metadata()
 			metadata["content"] = []any{seedance25Image("reference_image")}
+			if taskType == "edit" || taskType == "extend" {
+				metadata["content"] = []any{seedance25Video("reference_video")}
+				metadata["ratio"] = "adaptive"
+			}
+			if taskType == "edit" {
+				metadata["duration"] = -1
+			}
 			metadata["omni_reference_task_type"] = taskType
 
 			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
@@ -437,6 +444,61 @@ func TestValidateSeedance25OmniReferenceTaskTypeReachesUpstreamUnchanged(t *test
 		metadata["omni_reference_task_type"] = invalid
 		_, _, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
 		require.Error(t, err)
+	}
+}
+
+func TestValidateSeedance25ExplicitEditAndExtendConstraints(t *testing.T) {
+	tests := []struct {
+		name     string
+		taskType string
+		duration int
+		ratio    string
+		content  []any
+		valid    bool
+	}{
+		{name: "valid edit", taskType: "edit", duration: -1, ratio: "adaptive", content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "edit duration", taskType: "edit", duration: 4, ratio: "adaptive", content: []any{seedance25Video("reference_video")}},
+		{name: "edit ratio omitted", taskType: "edit", duration: -1, content: []any{seedance25Video("reference_video")}},
+		{name: "edit missing video", taskType: "edit", duration: -1, ratio: "adaptive", content: []any{seedance25Image("reference_image")}},
+		{name: "valid extend inferred duration", taskType: "extend", duration: -1, ratio: "adaptive", content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "valid extend fixed duration", taskType: "extend", duration: 5, ratio: "adaptive", content: []any{seedance25Video("reference_video")}, valid: true},
+		{name: "extend fixed ratio", taskType: "extend", duration: 5, ratio: "16:9", content: []any{seedance25Video("reference_video")}},
+		{name: "extend missing video", taskType: "extend", duration: 5, ratio: "adaptive", content: []any{seedance25Image("reference_image")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := validSeedance25Metadata()
+			metadata["omni_reference_task_type"] = tt.taskType
+			metadata["duration"] = tt.duration
+			metadata["content"] = tt.content
+			if tt.ratio != "" {
+				metadata["ratio"] = tt.ratio
+			}
+			if tt.valid {
+				metadata["generate_audio"] = false
+			}
+			c, info, err := validateSeedance25Body(t, seedance25RequestBody(t, metadata), seedance25TenantAliasForDoubaoTest)
+			if !tt.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			info.ChannelMeta = &relaycommon.ChannelMeta{IsModelMapped: true, UpstreamModelName: "mapped-provider-model"}
+			reader, buildErr := (&TaskAdaptor{}).BuildRequestBody(c, info)
+			require.NoError(t, buildErr)
+			body, readErr := io.ReadAll(reader)
+			require.NoError(t, readErr)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(body, &payload))
+			require.Equal(t, tt.taskType, payload["omni_reference_task_type"])
+			require.Equal(t, float64(tt.duration), payload["duration"])
+			require.Equal(t, "adaptive", payload["ratio"])
+			require.Equal(t, false, payload["generate_audio"])
+			upstreamContent := payload["content"].([]any)
+			require.Equal(t, "video_url", upstreamContent[0].(map[string]any)["type"])
+			require.Equal(t, "reference_video", upstreamContent[0].(map[string]any)["role"])
+		})
 	}
 }
 

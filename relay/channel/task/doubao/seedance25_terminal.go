@@ -183,12 +183,6 @@ func seedance25ActualQuota(task *model.Task, completionTokens int) (int, bool) {
 	return int(quotaInt64), true
 }
 
-var seedance25SafeUpstreamErrors = map[string]string{
-	"InvalidParameter.TaskTypeConstraint":                 "The request parameters are incompatible with the task type identified by the model. Update the parameters for that task type and try again.",
-	"InvalidParameter.TaskTypeMismatch":                   "The task type identified by the model does not match the specified value. Revise the prompt and input assets, then try again.",
-	"OutputAudioSensitiveContentDetected.PolicyViolation": "The generated audio may be related to copyright restrictions. Please replace the input content and try again.",
-}
-
 func seedance25SafeTaskData(status string, videoURL string, lastFrameURL string, completionTokens int, errorCode string, errorMessage string, retryable *bool) ([]byte, error) {
 	payload := map[string]any{"status": status}
 	if status == "succeeded" {
@@ -254,10 +248,10 @@ func (a *TaskAdaptor) ApplyTaskResultPolicy(task *model.Task, taskResult *relayc
 		taskResult.Url = videoURL
 		return responseBody, nil
 	case model.TaskStatusFailure:
-		if safeMessage, ok := seedance25SafeUpstreamErrors[taskResult.UpstreamErrorCode]; ok {
-			taskResult.Reason = safeMessage
-			retryable := false
-			return seedance25SafeTaskData("failed", "", "", 0, taskResult.UpstreamErrorCode, taskResult.Reason, &retryable)
+		if public, ok := seedance25ClassifyKnownCode(taskResult.UpstreamErrorCode, 0); ok {
+			taskResult.Reason = public.Message
+			retryable := public.Retryable
+			return seedance25SafeTaskData("failed", "", "", 0, public.Code, taskResult.Reason, &retryable)
 		}
 		taskResult.Reason = "video generation failed"
 		return seedance25SafeTaskData("failed", "", "", 0, "video_generation_failed", taskResult.Reason, nil)

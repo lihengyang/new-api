@@ -75,7 +75,10 @@ var seedance25ForbiddenFields = map[string]struct{}{
 }
 
 func seedance25InvalidRequest(message string) *dto.TaskError {
-	return service.TaskErrorWrapperLocal(fmt.Errorf("%s", message), "invalid_request_error", http.StatusBadRequest)
+	taskErr := service.TaskErrorWrapperLocal(fmt.Errorf("%s", message), "invalid_request_error", http.StatusBadRequest)
+	retryable := false
+	taskErr.Retryable = &retryable
+	return taskErr
 }
 
 func rawJSONIsNull(raw json.RawMessage) bool {
@@ -269,6 +272,24 @@ func validateSeedance25Content(raw json.RawMessage) (string, error) {
 	}
 }
 
+func seedance25HasReferenceVideo(raw json.RawMessage) bool {
+	var items []json.RawMessage
+	if common.Unmarshal(raw, &items) != nil {
+		return false
+	}
+	for _, rawItem := range items {
+		var item struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		}
+		if common.Unmarshal(rawItem, &item) == nil &&
+			item.Type == "video_url" && item.Role == seedance25InputReferenceVideo {
+			return true
+		}
+	}
+	return false
+}
+
 func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req *relaycommon.TaskSubmitReq) *dto.TaskError {
 	originModelName := info.OriginModelName
 	if originModelName == "" {
@@ -376,6 +397,19 @@ func validateSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo, req 
 		}
 	} else if ratio != "" && ratio != "adaptive" && ratio != "16:9" {
 		return seedance25InvalidRequest("metadata.ratio is not supported by the current customer contract")
+	}
+
+	taskType, _ := req.Metadata["omni_reference_task_type"].(string)
+	if taskType == "edit" || taskType == "extend" {
+		if !seedance25HasReferenceVideo(metadata["content"]) {
+			return seedance25InvalidRequest(fmt.Sprintf("metadata.omni_reference_task_type=%s requires at least one reference_video input", taskType))
+		}
+		if ratio != "adaptive" {
+			return seedance25InvalidRequest(fmt.Sprintf("metadata.omni_reference_task_type=%s requires metadata.ratio=adaptive", taskType))
+		}
+		if taskType == "edit" && duration != -1 {
+			return seedance25InvalidRequest("metadata.omni_reference_task_type=edit requires metadata.duration=-1")
+		}
 	}
 
 	req.Metadata["duration"] = duration

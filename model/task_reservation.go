@@ -46,6 +46,7 @@ type FinalizeTaskReservationParams struct {
 type FailTaskReservationParams struct {
 	ID         int64
 	FailReason string
+	Data       json.RawMessage
 	UpdatedAt  int64
 }
 
@@ -186,15 +187,20 @@ func FailTaskReservation(params FailTaskReservationParams) error {
 		updatedAt = time.Now().Unix()
 	}
 
+	updates := map[string]any{
+		"status":      TaskStatusFailure,
+		"progress":    "100%",
+		"quota":       0,
+		"fail_reason": params.FailReason,
+		"updated_at":  updatedAt,
+	}
+	if len(params.Data) > 0 {
+		updates["data"] = params.Data
+	}
+
 	result := DB.Model(&Task{}).
 		Where("id = ? AND status = ?", params.ID, TaskStatusReserved).
-		Updates(map[string]any{
-			"status":      TaskStatusFailure,
-			"progress":    "100%",
-			"quota":       0,
-			"fail_reason": params.FailReason,
-			"updated_at":  updatedAt,
-		})
+		Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}

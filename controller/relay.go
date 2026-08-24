@@ -749,9 +749,23 @@ func failTaskReservationIfNeeded(taskErr *dto.TaskError, relayInfo *relaycommon.
 	if failReason == "" && taskErr != nil && taskErr.Error != nil {
 		failReason = taskErr.Error.Error()
 	}
+	var taskData []byte
+	if taskErr != nil && taskErr.Retryable != nil {
+		payload := struct {
+			Error *dto.OpenAIVideoError `json:"error"`
+		}{
+			Error: &dto.OpenAIVideoError{
+				Code:      taskErr.Code,
+				Message:   taskErr.Message,
+				Retryable: taskErr.Retryable,
+			},
+		}
+		taskData, _ = common.Marshal(payload)
+	}
 	if err := model.FailTaskReservation(model.FailTaskReservationParams{
 		ID:         relayInfo.ReservationTaskID,
 		FailReason: failReason,
+		Data:       taskData,
 	}); err != nil {
 		common.SysError(fmt.Sprintf("fail task reservation error: reservation_id=%d error=%s", relayInfo.ReservationTaskID, err.Error()))
 	}
@@ -770,7 +784,7 @@ func taskErrorFromOpenAIError(openAIError types.OpenAIError, statusCode int) *dt
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
-	if taskErr.StatusCode == http.StatusTooManyRequests {
+	if taskErr.StatusCode == http.StatusTooManyRequests && taskErr.Retryable == nil {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
 	if taskErr.Code == relaycommon.ClientRequestIDErrorCode {
@@ -788,6 +802,12 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
 	if taskErr == nil {
+		return false
+	}
+	// An explicit public retryability decision is a client signal only. The
+	// Seedance 2.5 submit path is deliberately single-shot and must not create a
+	// second upstream task inside the gateway.
+	if taskErr.Retryable != nil {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
